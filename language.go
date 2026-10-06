@@ -8,7 +8,7 @@ const ScriptID = "webtyp-lang"
 
 // Private global configuration
 var (
-	defLang lang = EN
+	defLang       lang = EN
 	explicitlySet bool
 )
 
@@ -56,6 +56,12 @@ const (
 	RU // 8 - Russian
 )
 
+// Supported returns the language codes lang can show, in the order offered
+// to people: "en", "es", "zh", "hi", "ar", "pt", "fr", "de", "ru".
+func Supported() []string {
+	return []string{"en", "es", "zh", "hi", "ar", "pt", "fr", "de", "ru"}
+}
+
 func resolveDefaultLang() lang {
 	loadFromPage()
 	sysLang := getSystemLang()
@@ -69,6 +75,11 @@ func resolveDefaultLang() lang {
 	}
 	return sysLang
 }
+
+// Current returns the active output language code ("EN", "ES", …) without
+// changing it. Use it to read the language; OutLang() with no arguments
+// re-detects and sets it.
+func Current() string { return getCurrentLang().String() }
 
 // OutLang sets and returns the current output language as a string.
 func OutLang(l ...any) string {

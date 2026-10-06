@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"webtyp.com/lang"
 )
 
 const (
@@ -17,9 +19,6 @@ const (
 	// defaultLanguage is the language a new dictionary file starts with.
 	defaultLanguage = "es"
 )
-
-// knownCodes are the language codes webtyp.com/lang can show.
-var knownCodes = []string{"en", "es", "zh", "hi", "ar", "pt", "fr", "de", "ru"}
 
 // langFile is the on-disk shape. Keys hold positional lists: the value at
 // index i belongs to Languages[i].
@@ -89,7 +88,7 @@ func validate(path string, f langFile) error {
 }
 
 func isKnownCode(code string) bool {
-	for _, c := range knownCodes {
+	for _, c := range lang.Supported() {
 		if c == code {
 			return true
 		}

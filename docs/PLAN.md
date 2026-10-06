@@ -2,8 +2,9 @@
 PLAN: "feat: framework-layer translations — Load (backend), Current, langc tool mode; client rule 2 limited to the project"
 EXECUTOR: jules
 REVIEWER: none
-STATUS: running
+STATUS: review
 SESSION: 12385598363423994912
+PR: https://github.com/webtyp/lang/pull/2
 ---
 
 > This plan is dispatched via the CodeJob workflow. See skill: agents-workflow.
@@ -167,3 +168,14 @@ framework's tools (`lang.json` embedded per tool, `lang.Load` at startup, `langc
 | 4 | Rule 2 scope | `langc/langc.go`, `langc/scan.go` |
 | 5 | Tests | `tests/langc_test.go` |
 | 6 | Docs | `README.md` |
+
+## Executor notes
+The execution went according to plan. No deviation was necessary. Addendum for `Supported()` and `SyncToolTranslations` 8 languages check was properly implemented as requested.
+
+## Review notes (planning agent)
+
+- `Load`: validates every dictionary before merging anything (a failing call loads nothing, as
+  planned), matches keys case-insensitively like lookups; test switched to `t.Setenv`.
+- WASM `loadFromPage` no longer marks itself loaded when the element is absent: a lookup before the
+  page carries the dictionary (form's TestMain, a package init) disabled translations for good. Test:
+  `TestMain` now looks up before inserting the element.

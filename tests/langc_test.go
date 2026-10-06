@@ -131,7 +131,7 @@ func TestSync_CreatesProjectFileWithEveryKeySource(t *testing.T) {
 		"IP address", "Format: 192.168.1.1", "is active", // rules 3, 6 (and humanised name)
 		"This", "action", "Pick a conversation", // rule 1: one key per argument, as written
 		"name", "required", // rule 2
-		"Computer",                       // rule 4
+		"Computer",                      // rule 4
 		"Search patients", "Find rooms", // rule 7, direct and elided element
 		"Converted",      // rule 7, conversion
 		"Search devices", // rule 8
@@ -272,10 +272,15 @@ func TestMissing_ListsModules(t *testing.T) {
 
 func TestSync_LibraryMode(t *testing.T) {
 	_, lib, _ := fixture(t)
+	write(t, filepath.Join(lib, "ui.go"), `package lib
+import "webtyp.com/fmt"
+func init() { _ = fmt.Err("internal failure") }
+`)
+
 	if err := os.Remove(filepath.Join(lib, "lang.json")); err != nil {
 		t.Fatal(err)
 	}
-	tr := langc.New(fakeModules{}, nil)
+	tr := langc.New(fakeModules{{Path: "example.com/lib", Dir: lib, LocalDir: lib, IsMain: true}}, nil)
 	if err := tr.SyncTranslations(lib); err != nil {
 		t.Fatal(err)
 	}
@@ -287,6 +292,10 @@ func TestSync_LibraryMode(t *testing.T) {
 		t.Errorf("library keys must be collected from its own code:\n%s", raw)
 	}
 
+	if _, ok := d.Keys["internal failure"]; !ok {
+		t.Errorf("library mode must pick up fmt.Err in its own module")
+	}
+
 	// A library key no scan can see (a month name built at run time) is kept.
 	write(t, filepath.Join(lib, "lang.json"), `{"languages": ["es"], "keys": {"January": ["Enero"]}}`)
 	if err := tr.SyncTranslations(lib); err != nil {
@@ -295,5 +304,89 @@ func TestSync_LibraryMode(t *testing.T) {
 	d, raw = readDict(t, filepath.Join(lib, "lang.json"))
 	if got := d.Keys["January"]; len(got) != 1 || got[0] != "Enero" {
 		t.Errorf("library mode must keep keys it cannot see in code:\n%s", raw)
+	}
+}
+
+func TestSyncToolMode(t *testing.T) {
+	root := t.TempDir()
+	tool := filepath.Join(root, "tool")
+	write(t, filepath.Join(tool, "go.mod"), "module example.com/tool\nrequire webtyp.com/lang v0.0.0\n")
+	write(t, filepath.Join(tool, "main.go"), `//go:build !wasm
+package main
+import (
+	"webtyp.com/lang"
+	"webtyp.com/fmt"
+)
+func main() {
+	lang.Translate("Server", "started")
+	fmt.Err("port", "busy")
+}
+`)
+
+	mods := fakeModules{{Path: "example.com/tool", Dir: tool, LocalDir: tool, IsMain: true}}
+	tr := langc.New(mods, nil)
+
+	// Tool mode
+	if err := tr.SyncToolTranslations(tool); err != nil {
+		t.Fatal(err)
+	}
+
+	d, raw := readDict(t, filepath.Join(tool, "lang.json"))
+
+	if len(d.Languages) != 8 {
+		t.Errorf("expected 8 languages for tool mode, got %d: %v", len(d.Languages), d.Languages)
+	}
+	if d.Languages[0] != "es" || d.Languages[7] != "ru" {
+		t.Errorf("unexpected languages for tool mode: %v", d.Languages)
+	}
+
+	for _, k := range []string{"Server", "started", "port", "busy"} {
+		if v, ok := d.Keys[k]; !ok {
+			t.Errorf("tool mode missing key %q:\n%s", k, raw)
+		} else if len(v) != 8 {
+			t.Errorf("tool mode key %q does not have 8 slots: %v", k, v)
+		}
+	}
+
+	// Library mode should NOT see them since they are in !wasm file
+	if err := os.Remove(filepath.Join(tool, "lang.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.SyncTranslations(tool); err != nil {
+		t.Fatal(err)
+	}
+	dClient, _ := readDict(t, filepath.Join(tool, "lang.json"))
+	for _, k := range []string{"Server", "started", "port", "busy"} {
+		if _, ok := dClient.Keys[k]; ok {
+			t.Errorf("client mode should NOT pick up keys from !wasm file, got %q", k)
+		}
+	}
+}
+
+func TestSyncToolMode_AppendsLanguages(t *testing.T) {
+	root := t.TempDir()
+	tool := filepath.Join(root, "tool")
+	write(t, filepath.Join(tool, "go.mod"), "module example.com/tool\n")
+	write(t, filepath.Join(tool, "lang.json"), `{"languages": ["es"], "keys": {"Hola": ["Hello"]}}`)
+	write(t, filepath.Join(tool, "main.go"), `package main`)
+
+	mods := fakeModules{{Path: "example.com/tool", Dir: tool, LocalDir: tool, IsMain: true}}
+	tr := langc.New(mods, nil)
+
+	if err := tr.SyncToolTranslations(tool); err != nil {
+		t.Fatal(err)
+	}
+
+	d, _ := readDict(t, filepath.Join(tool, "lang.json"))
+	if len(d.Languages) != 8 {
+		t.Errorf("expected 8 languages, got %d: %v", len(d.Languages), d.Languages)
+	}
+
+	if d.Languages[0] != "es" || d.Languages[1] != "zh" {
+		t.Errorf("expected es, zh, got %s, %s", d.Languages[0], d.Languages[1])
+	}
+
+	if got := d.Keys["Hola"]; len(got) != 8 || got[0] != "Hello" || got[1] != "" {
+		t.Errorf("expected 8 slots padded correctly, got %v", got)
 	}
 }
