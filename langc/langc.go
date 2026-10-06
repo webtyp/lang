@@ -6,6 +6,7 @@ package langc
 import (
 	"bytes"
 	"encoding/json"
+	"go/build"
 	"os"
 	"path/filepath"
 	"sort"
@@ -134,12 +135,23 @@ func modulePath(dir string) string {
 	return filepath.Base(dir)
 }
 
-func scan(mods []modfind.Module) keyUses {
+func scan(mods []modfind.Module, ctx build.Context, isProject bool) keyUses {
 	var files []*srcFile
-	for _, m := range mods {
-		files = append(files, parseModule(m)...)
+	var rule2Scope map[string]bool
+
+	if isProject {
+		rule2Scope = map[string]bool{}
+		for _, m := range mods {
+			if m.IsMain {
+				rule2Scope[m.Path] = true
+			}
+		}
 	}
-	return collectKeys(files, collectTextFields(files))
+
+	for _, m := range mods {
+		files = append(files, parseModule(m, ctx)...)
+	}
+	return collectKeys(files, collectTextFields(files), rule2Scope)
 }
 
 // libValue returns the first non-empty library value of key for code.
@@ -152,6 +164,70 @@ func (st state) libValue(key, code string) string {
 	return ""
 }
 
+// SyncToolTranslations updates <rootDir>/lang.json for a backend tool: it scans
+// the module's BACKEND build (not js/wasm) and applies every rule, including
+// fmt.Err everywhere in the module. Same file shape and merge rules as a library.
+func (t *Translations) SyncToolTranslations(rootDir string) error {
+	st, mods, err := t.load(rootDir)
+	if err != nil {
+		return err
+	}
+
+	uses := scan(mods, build.Default, false)
+
+	supportedCodes := []string{}
+	for _, c := range lang.Supported() {
+		if c != "en" {
+			supportedCodes = append(supportedCodes, c)
+		}
+	}
+
+	for _, reqCode := range supportedCodes {
+		found := false
+		for _, exCode := range st.dict.Languages {
+			if exCode == reqCode {
+				found = true
+				break
+			}
+		}
+		if !found {
+			st.dict.Languages = append(st.dict.Languages, reqCode)
+		}
+	}
+
+	n := len(st.dict.Languages)
+	keys := map[string][]string{}
+
+	for key := range uses {
+		existing, had := st.dict.Keys[key]
+		if had {
+			keys[key] = pad(existing, n)
+			continue
+		}
+		keys[key] = make([]string, n)
+	}
+
+	for key, v := range st.dict.Keys {
+		if _, ok := keys[key]; !ok {
+			keys[key] = pad(v, n)
+		}
+	}
+
+	st.dict.Keys = keys
+	out := format(st.dict)
+
+	if !bytes.Equal(out, st.raw) {
+		if err := os.MkdirAll(filepath.Dir(st.path), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(st.path, out, 0o644); err != nil {
+			return err
+		}
+	}
+	t.report(st, uses)
+	return nil
+}
+
 // SyncTranslations updates the dictionary file of the module at rootDir: every
 // key the code uses gets a slot per language (never overwriting a translation),
 // a project's keys used nowhere are removed (a library's are kept: it may
@@ -161,7 +237,7 @@ func (t *Translations) SyncTranslations(rootDir string) error {
 	if err != nil {
 		return err
 	}
-	uses := scan(mods)
+	uses := scan(mods, clientBuild, st.isProject)
 	n := len(st.dict.Languages)
 	keys := map[string][]string{}
 	for key := range uses {
@@ -255,7 +331,7 @@ func (t *Translations) MissingTranslations(rootDir string) ([]Missing, error) {
 	if err != nil {
 		return nil, err
 	}
-	return st.missing(scan(mods)), nil
+	return st.missing(scan(mods, clientBuild, st.isProject)), nil
 }
 
 // BundleTranslations returns the <script type="application/json"

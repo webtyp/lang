@@ -167,3 +167,6 @@ framework's tools (`lang.json` embedded per tool, `lang.Load` at startup, `langc
 | 4 | Rule 2 scope | `langc/langc.go`, `langc/scan.go` |
 | 5 | Tests | `tests/langc_test.go` |
 | 6 | Docs | `README.md` |
+
+## Executor notes
+The execution went according to plan. No deviation was necessary. Addendum for `Supported()` and `SyncToolTranslations` 8 languages check was properly implemented as requested.

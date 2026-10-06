@@ -117,7 +117,7 @@ func stringLit(e ast.Expr) (string, bool) {
 
 // parseModule parses every non-test Go file of a module, skipping hidden
 // directories, skipDirs and nested modules.
-func parseModule(m modfind.Module) []*srcFile {
+func parseModule(m modfind.Module, ctx build.Context) []*srcFile {
 	root := m.SourceDir()
 	if root == "" {
 		return nil
@@ -144,9 +144,7 @@ func parseModule(m modfind.Module) []*srcFile {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		// Only the client translates: a file that the js/wasm build excludes
-		// (//go:build !wasm, a _linux.go suffix…) never reaches the browser.
-		if ok, err := clientBuild.MatchFile(filepath.Dir(path), d.Name()); err != nil || !ok {
+		if ok, err := ctx.MatchFile(filepath.Dir(path), d.Name()); err != nil || !ok {
 			return nil
 		}
 		src, err := os.ReadFile(path)
@@ -233,14 +231,14 @@ func collectTextFields(files []*srcFile) textFields {
 }
 
 // collectKeys applies rules 1–8 to every file.
-func collectKeys(files []*srcFile, tf textFields) keyUses {
+func collectKeys(files []*srcFile, tf textFields, rule2Scope map[string]bool) keyUses {
 	uses := keyUses{}
 	for _, f := range files {
 		f := f
 		ast.Inspect(f.file, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.CallExpr:
-				f.callKeys(x, uses)
+				f.callKeys(x, uses, rule2Scope)
 			case *ast.CompositeLit:
 				f.literalKeys(x, tf, uses)
 			case *ast.FuncDecl:
@@ -252,10 +250,23 @@ func collectKeys(files []*srcFile, tf textFields) keyUses {
 	return uses
 }
 
-func (f *srcFile) callKeys(call *ast.CallExpr, uses keyUses) {
+func (f *srcFile) callKeys(call *ast.CallExpr, uses keyUses, rule2Scope map[string]bool) {
 	// Rule 1: lang.Translate("...", ...). Rule 2: fmt.Err("...", ...).
 	// Rule 7 (conversions): lang.Text("...").
-	if f.is(call.Fun, pathLang, "Translate") || f.is(call.Fun, pathFmt, "Err") || f.is(call.Fun, pathLang, "Text") {
+
+	if f.is(call.Fun, pathLang, "Translate") || f.is(call.Fun, pathLang, "Text") {
+		for _, a := range call.Args {
+			if s, ok := stringLit(a); ok {
+				uses.add(s, f.module)
+			}
+		}
+		return
+	}
+
+	if f.is(call.Fun, pathFmt, "Err") {
+		if rule2Scope != nil && !rule2Scope[f.module] {
+			return
+		}
 		for _, a := range call.Args {
 			if s, ok := stringLit(a); ok {
 				uses.add(s, f.module)

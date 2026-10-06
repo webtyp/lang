@@ -10,18 +10,26 @@ import (
 
 func main() {
 	if len(os.Args) == 1 {
-		fmt.Println("Usage: langc sync [dir]")
+		fmt.Println("Usage: langc sync [-tool] [dir]")
 		os.Exit(0)
 	}
 
 	if os.Args[1] != "sync" {
-		fmt.Println("Usage: langc sync [dir]")
+		fmt.Println("Usage: langc sync [-tool] [dir]")
 		os.Exit(0)
 	}
 
+	toolMode := false
 	dir := "."
-	if len(os.Args) > 2 {
-		dir = os.Args[2]
+
+	args := os.Args[2:]
+	if len(args) > 0 && args[0] == "-tool" {
+		toolMode = true
+		args = args[1:]
+	}
+
+	if len(args) > 0 {
+		dir = args[0]
 	}
 
 	log := func(args ...any) {
@@ -29,7 +37,15 @@ func main() {
 	}
 
 	t := langc.New(modfind.New(), log)
-	if err := t.SyncTranslations(dir); err != nil {
+
+	var err error
+	if toolMode {
+		err = t.SyncToolTranslations(dir)
+	} else {
+		err = t.SyncTranslations(dir)
+	}
+
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

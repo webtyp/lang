@@ -40,12 +40,21 @@ Write the words in the order that makes sense in Spanish; English will still be 
 
 Unknown words (e.g. `"Go"`, version numbers, paths) pass through unchanged in both languages.
 
+## Two layers
+
+webtyp provides translations for two distinct layers:
+
+1. **The App**: What the user builds. The dictionary is kept in `config/lang.json` by `langc sync`. In the browser, `sitec` inlines the merged dictionary in `index.html`, and `lang` reads it automatically.
+2. **The Framework's Tools**: webtyp's own tools (e.g. devtui, server) embed their own `lang.json` using `go:embed`. At startup, they call `lang.Load` to register their dictionaries. You can update a tool's dictionary by running `langc sync -tool`. Use `lang.Current()` to read the active language without changing it.
+
 ## API
 
 ### Global Language Configuration
 
 - `OutLang(l ...any) string`: Sets or gets the current global language. Accepts `lang` constants (e.g., `lang.ES`) or string codes (e.g., `"fr"`). Returns the current language code.
 - `OutLang()`: Auto-detects system/browser language and sets it as the global default.
+- `Current() string`: Returns the current language code without changing it.
+- `Load(dicts ...[]byte) error`: Installs translation dictionaries for backend tools.
 
 ### Translation
 
