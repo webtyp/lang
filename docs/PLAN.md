@@ -3,8 +3,9 @@ PLAN: "feat: lang as its own module; translations as data (config/lang.json) wit
 TAG: v0.1.0
 EXECUTOR: jules
 REVIEWER: none
-STATUS: running
+STATUS: review
 SESSION: 14954950972841435760
+PR: https://github.com/webtyp/lang/pull/1
 ---
 
 > This plan is dispatched via the CodeJob workflow. See skill: agents-workflow.
