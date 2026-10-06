@@ -80,8 +80,11 @@ func render() {
 	_ = bar.Bar{Placeholder: "Search patients", Name: "Ana"}
 	_ = []bar.Bar{{Placeholder: "Find rooms"}}
 	_ = tr.Text("Converted")
+	_ = tr.Translate(msgSaved, bar.MsgClosed)
 	_ = 192.168
 }
+
+const msgSaved = "Saved"
 
 type presenter struct{}
 
@@ -98,6 +101,9 @@ type Bar struct {
 	Placeholder Text
 	Name        string
 }
+
+// MsgClosed is a named constant passed to Translate from another package.
+const MsgClosed = "Closed"
 
 func (b Bar) Render() string { return Translate(b.Placeholder, "Close").String() }
 `)
@@ -133,8 +139,9 @@ func TestSync_CreatesProjectFileWithEveryKeySource(t *testing.T) {
 		"name", "required", // rule 2
 		"Computer",                      // rule 4
 		"Search patients", "Find rooms", // rule 7, direct and elided element
-		"Converted",      // rule 7, conversion
-		"Search devices", // rule 8
+		"Converted",       // rule 7, conversion
+		"Search devices",  // rule 8
+		"Saved", "Closed", // named constants (same package and imported)
 	}
 	for _, k := range want {
 		if _, ok := d.Keys[k]; !ok {

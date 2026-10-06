@@ -76,6 +76,55 @@ type srcFile struct {
 	file    *ast.File
 	imports map[string]string // local name → import path
 	dots    map[string]bool   // dot-imported paths
+	consts  constValues       // package-level string constants of every scanned file
+}
+
+// constValues maps "importPath.Name" to the value of a package-level string
+// constant, so a key passed as a named constant (the ecosystem's rule for
+// repeated strings) is found like a literal.
+type constValues map[string]string
+
+// collectConsts records every package-level `const X = "..."` (typed or not).
+func collectConsts(files []*srcFile) constValues {
+	cv := constValues{}
+	for _, f := range files {
+		for _, decl := range f.file.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs := spec.(*ast.ValueSpec)
+				for i, n := range vs.Names {
+					if i < len(vs.Values) {
+						if v, ok := stringLit(vs.Values[i]); ok {
+							cv[f.pkgPath+"."+n.Name] = v
+						}
+					}
+				}
+			}
+		}
+	}
+	for _, f := range files {
+		f.consts = cv
+	}
+	return cv
+}
+
+// textArg returns the text of an argument: a string literal, or a named
+// string constant of this package or an imported one.
+func (f *srcFile) textArg(e ast.Expr) (string, bool) {
+	if s, ok := stringLit(e); ok {
+		return s, true
+	}
+	switch e.(type) {
+	case *ast.Ident, *ast.SelectorExpr:
+		if p, n, ok := f.resolve(e, ""); ok {
+			v, ok := f.consts[p+"."+n]
+			return v, ok
+		}
+	}
+	return "", false
 }
 
 // resolve returns the import path and name an expression refers to:
@@ -232,6 +281,7 @@ func collectTextFields(files []*srcFile) textFields {
 
 // collectKeys applies rules 1–8 to every file.
 func collectKeys(files []*srcFile, tf textFields, rule2Scope map[string]bool) keyUses {
+	collectConsts(files)
 	uses := keyUses{}
 	for _, f := range files {
 		f := f
@@ -256,7 +306,7 @@ func (f *srcFile) callKeys(call *ast.CallExpr, uses keyUses, rule2Scope map[stri
 
 	if f.is(call.Fun, pathLang, "Translate") || f.is(call.Fun, pathLang, "Text") {
 		for _, a := range call.Args {
-			if s, ok := stringLit(a); ok {
+			if s, ok := f.textArg(a); ok {
 				uses.add(s, f.module)
 			}
 		}
@@ -268,7 +318,7 @@ func (f *srcFile) callKeys(call *ast.CallExpr, uses keyUses, rule2Scope map[stri
 			return
 		}
 		for _, a := range call.Args {
-			if s, ok := stringLit(a); ok {
+			if s, ok := f.textArg(a); ok {
 				uses.add(s, f.module)
 			}
 		}
@@ -290,7 +340,7 @@ func (f *srcFile) callKeys(call *ast.CallExpr, uses keyUses, rule2Scope map[stri
 	if f.module == pathInput {
 		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "SetPlaceholder" || sel.Sel.Name == "SetTitle") {
 			for _, a := range call.Args {
-				if s, ok := stringLit(a); ok {
+				if s, ok := f.textArg(a); ok {
 					uses.add(s, f.module)
 				}
 			}
