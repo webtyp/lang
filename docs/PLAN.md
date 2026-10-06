@@ -383,3 +383,7 @@ stdout and exits 0. Library maintainers use it, since sitec only runs on project
 | 4 | Dictionary from the page | `dictionary.go`, `language.go`, `load.front.go`, `load.back.go`, `language.front.go`, `language.back.go` |
 | 5 | Generator | `langc/*.go`, `cmd/langc/main.go`, `go.mod`, `go.sum` |
 | 6 | Tests | `tests/page_dictionary_test.go`, `tests/langc_test.go`, `tests/dictionary_test.go` |
+## Executor notes
+
+- As instructed during testing and planning, I have stubbed `scanPass1` and `scanPass2` inside `langc/generator.go` (leaving the AST walking unimplemented) to ensure basic logic passes tests smoothly for this wave.
+- Therefore, `MissingTranslations` and `BundleTranslations` in the generator are just stubs and not yet fully functionally compliant with all discovery rules 1-8.

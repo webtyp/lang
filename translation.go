@@ -2,14 +2,21 @@ package lang
 
 import "webtyp.com/fmt"
 
+// Text is fixed UI text written in ENGLISH that must be shown translated: a
+// component field such as a placeholder, an empty-state message or a dialog
+// title. Declare such a field as lang.Text (callers still write a plain string
+// literal) and show it with lang.Translate(field). Data — a person's name, a
+// row title — stays string and is never translated.
+type Text string
+
 // Translate creates a translated string with support for multilingual translations.
 // EN words are lookup keys (case-insensitive). Pass-through occurs if missing from dictionary.
 func Translate(values ...any) *fmt.Conv {
-	return SmartArgs(fmt.GetConv(), fmt.BuffOut, " ", true, false, values...)
+	return smartArgs(fmt.GetConv(), fmt.BuffOut, " ", true, false, values...)
 }
 
-// SmartArgs handles language detection, format string detection, and argument processing
-func SmartArgs(c *fmt.Conv, dest fmt.BuffDest, separator string, allowStringCode bool, detectFormat bool, values ...any) *fmt.Conv {
+// smartArgs handles language detection, format string detection, and argument processing
+func smartArgs(c *fmt.Conv, dest fmt.BuffDest, separator string, allowStringCode bool, detectFormat bool, values ...any) *fmt.Conv {
 	if len(values) == 0 {
 		return c
 	}
@@ -86,6 +93,12 @@ func processTranslatedArgs(c *fmt.Conv, dest fmt.BuffDest, args []any, currentLa
 				c.WrString(dest, translated)
 			} else {
 				c.WrString(dest, v) // pass-through
+			}
+		case Text:
+			if translated, ok := lookupWord(string(v), currentLang); ok {
+				c.WrString(dest, translated)
+			} else {
+				c.WrString(dest, string(v)) // pass-through
 			}
 		default:
 			// Use public API to convert other types
