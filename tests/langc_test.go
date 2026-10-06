@@ -131,7 +131,7 @@ func TestSync_CreatesProjectFileWithEveryKeySource(t *testing.T) {
 		"IP address", "Format: 192.168.1.1", "is active", // rules 3, 6 (and humanised name)
 		"This", "action", "Pick a conversation", // rule 1: one key per argument, as written
 		"name", "required", // rule 2
-		"Computer",                       // rule 4
+		"Computer",                      // rule 4
 		"Search patients", "Find rooms", // rule 7, direct and elided element
 		"Converted",      // rule 7, conversion
 		"Search devices", // rule 8

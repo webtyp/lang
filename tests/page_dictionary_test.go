@@ -11,6 +11,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// A lookup before the page carries the dictionary (as a package init or
+	// a consumer's TestMain may do) must not disable translations for good.
+	_ = lang.Translate("Delete").String()
+
 	doc := js.Global().Get("document")
 	if !doc.IsUndefined() {
 		script := doc.Call("createElement", "script")

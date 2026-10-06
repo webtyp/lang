@@ -8,7 +8,7 @@ const ScriptID = "webtyp-lang"
 
 // Private global configuration
 var (
-	defLang lang = EN
+	defLang       lang = EN
 	explicitlySet bool
 )
 

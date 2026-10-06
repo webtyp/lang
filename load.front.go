@@ -17,17 +17,20 @@ func loadFromPage() {
 	if loaded {
 		return
 	}
-	loaded = true
 
 	doc := js.Global().Get("document")
 	if doc.IsUndefined() {
 		return
 	}
 
+	// Not marked loaded until the element exists: a lookup made before the
+	// page carries the dictionary (a package init, a test's TestMain that
+	// inserts it later) must not disable translations for good.
 	script := doc.Call("getElementById", ScriptID)
 	if script.IsNull() || script.IsUndefined() {
 		return
 	}
+	loaded = true
 
 	jsonStr := script.Get("textContent").String()
 	if jsonStr == "" {

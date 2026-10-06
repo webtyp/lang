@@ -171,3 +171,11 @@ framework's tools (`lang.json` embedded per tool, `lang.Load` at startup, `langc
 
 ## Executor notes
 The execution went according to plan. No deviation was necessary. Addendum for `Supported()` and `SyncToolTranslations` 8 languages check was properly implemented as requested.
+
+## Review notes (planning agent)
+
+- `Load`: validates every dictionary before merging anything (a failing call loads nothing, as
+  planned), matches keys case-insensitively like lookups; test switched to `t.Setenv`.
+- WASM `loadFromPage` no longer marks itself loaded when the element is absent: a lookup before the
+  page carries the dictionary (form's TestMain, a package init) disabled translations for good. Test:
+  `TestMain` now looks up before inserting the element.

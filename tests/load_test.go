@@ -3,7 +3,6 @@
 package lang_test
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -31,6 +30,24 @@ func TestLoad(t *testing.T) {
 		t.Errorf("expected Hola, got %s", conv)
 	}
 
+	// A failing call loads nothing, not even its valid dictionaries.
+	ok := []byte(`{"languages": ["es"], "keys": {"Partial": ["Parcial"]}}`)
+	if err := lang.Load(ok, []byte(`{"languages": ["xx"], "keys": {}}`)); err == nil {
+		t.Fatal("expected an error for an unknown code")
+	}
+	lang.OutLang("es")
+	if got := lang.Translate("Partial").String(); got != "Partial" {
+		t.Errorf("a failing Load must load nothing, got %q", got)
+	}
+
+	// Keys match case-insensitively, like lookups.
+	if err := lang.Load([]byte(`{"languages": ["es"], "keys": {"hello": ["Hola2"], "World": ["Mundo"]}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := lang.Translate("world").String(); got != "Mundo" {
+		t.Errorf("case-insensitive lookup after Load, got %q", got)
+	}
+
 	// Test unknown code
 	dictUnknown := []byte(`{"languages": ["xx"], "keys": {"Test": ["Valor"]}}`)
 	err = lang.Load(dictUnknown)
@@ -46,7 +63,7 @@ func TestLoad(t *testing.T) {
 	}
 
 	// Test system default lang fallback
-	os.Setenv("LANG", "es_CL.UTF-8")
+	t.Setenv("LANG", "es_CL.UTF-8")
 	// After loading, we just loaded es and fr from dict1 and dict2
 	out := lang.OutLang()
 	if out != "ES" {

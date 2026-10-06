@@ -27,87 +27,73 @@ type langFile struct {
 // first non-empty value wins. Apps never call it: in the browser the
 // dictionary comes from the page.
 func Load(dicts ...[]byte) error {
-	for i, dictBytes := range dicts {
-		var f langFile
-		if err := json.Unmarshal(dictBytes, &f); err != nil {
+	// Parse and validate every dictionary first: a failing call loads nothing.
+	files := make([]langFile, len(dicts))
+	codes := make([][]lang, len(dicts))
+	for i, raw := range dicts {
+		if err := json.Unmarshal(raw, &files[i]); err != nil {
 			return stdlibfmt.Errorf("lang: dictionary %d: %w", i, err)
 		}
-
-		codeToLang := make([]lang, len(f.Languages))
-		known := make([]bool, len(f.Languages))
-
-		for j, code := range f.Languages {
-			if l, ok := mapLangCode(code); ok {
-				codeToLang[j] = l
-				known[j] = true
-
-				// add to pageLangs if not already there
-				found := false
-				for _, pl := range pageLangs {
-					if pl == l {
-						found = true
-						break
-					}
-				}
-				if !found {
-					pageLangs = append(pageLangs, l)
-				}
-			} else {
+		codes[i] = make([]lang, len(files[i].Languages))
+		for j, code := range files[i].Languages {
+			l, ok := mapLangCode(code)
+			if !ok {
 				return stdlibfmt.Errorf("lang: dictionary %d: unknown language code %q", i, code)
 			}
+			codes[i][j] = l
 		}
-
-		for k, v := range f.Keys {
-			if len(v) > len(f.Languages) {
+		for k, v := range files[i].Keys {
+			if len(v) > len(files[i].Languages) {
 				return stdlibfmt.Errorf("lang: dictionary %d: key %q has more values than languages", i, k)
 			}
 		}
-
-		// Fill dictEntries. Since it merges into what is already loaded, we update existing entries or append new ones.
+	}
+	for i, f := range files {
+		for _, l := range codes[i] {
+			if l != EN && !containsLang(pageLangs, l) {
+				pageLangs = append(pageLangs, l)
+			}
+		}
 		for key, values := range f.Keys {
-			found := false
-			for j, entry := range dictEntries {
-				if entry.translations[EN] == key {
-					found = true
-					for k := 0; k < len(values) && k < len(f.Languages); k++ {
-						if !known[k] || codeToLang[k] == EN {
-							continue
-						}
-						// first non-empty value wins (or if currently empty, overwrite)
-						if dictEntries[j].translations[codeToLang[k]] == "" && values[k] != "" {
-							dictEntries[j].translations[codeToLang[k]] = values[k]
-						}
-					}
+			idx := -1
+			for j := range dictEntries {
+				if compareCaseInsensitive(dictEntries[j].translations[EN], key) == 0 {
+					idx = j
 					break
 				}
 			}
-
-			if !found {
+			if idx < 0 {
 				var e entry
 				e.translations[EN] = key
-				for k := 0; k < len(values) && k < len(f.Languages); k++ {
-					if !known[k] || codeToLang[k] == EN {
-						continue
-					}
-					e.translations[codeToLang[k]] = values[k]
-				}
 				dictEntries = append(dictEntries, e)
+				idx = len(dictEntries) - 1
+			}
+			for k, v := range values {
+				l := codes[i][k]
+				// first non-empty value wins; EN holds the key itself
+				if l != EN && v != "" && dictEntries[idx].translations[l] == "" {
+					dictEntries[idx].translations[l] = v
+				}
 			}
 		}
-
 		if f.Default != "" && !pageSet {
 			if l, ok := mapLangCode(f.Default); ok {
 				pageDef = l
-				pageSet = true
 			}
 		}
 	}
-
-	// Ensure pageSet is true if pageLangs has something
 	if len(pageLangs) > 0 {
 		pageSet = true
 	}
-
 	sortDict()
 	return nil
+}
+
+func containsLang(list []lang, l lang) bool {
+	for _, x := range list {
+		if x == l {
+			return true
+		}
+	}
+	return false
 }
