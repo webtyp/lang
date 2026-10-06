@@ -154,7 +154,8 @@ func (st state) libValue(key, code string) string {
 
 // SyncTranslations updates the dictionary file of the module at rootDir: every
 // key the code uses gets a slot per language (never overwriting a translation),
-// keys used nowhere are removed, and the file is written only when it changes.
+// a project's keys used nowhere are removed (a library's are kept: it may
+// translate texts built at run time), and the file is written only when it changes.
 func (t *Translations) SyncTranslations(rootDir string) error {
 	st, mods, err := t.load(rootDir)
 	if err != nil {
@@ -173,6 +174,15 @@ func (t *Translations) SyncTranslations(rootDir string) error {
 			continue // libraries already translate it for every project language
 		}
 		keys[key] = make([]string, n)
+	}
+	if !st.isProject {
+		// A library may translate texts it builds at run time (date's month
+		// names), which no scan can see: its existing keys are never removed.
+		for key, v := range st.dict.Keys {
+			if _, ok := keys[key]; !ok {
+				keys[key] = pad(v, n)
+			}
+		}
 	}
 	st.dict.Keys = keys
 	out := format(st.dict)

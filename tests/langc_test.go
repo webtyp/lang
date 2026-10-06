@@ -286,4 +286,14 @@ func TestSync_LibraryMode(t *testing.T) {
 	if _, ok := d.Keys["Close"]; !ok {
 		t.Errorf("library keys must be collected from its own code:\n%s", raw)
 	}
+
+	// A library key no scan can see (a month name built at run time) is kept.
+	write(t, filepath.Join(lib, "lang.json"), `{"languages": ["es"], "keys": {"January": ["Enero"]}}`)
+	if err := tr.SyncTranslations(lib); err != nil {
+		t.Fatal(err)
+	}
+	d, raw = readDict(t, filepath.Join(lib, "lang.json"))
+	if got := d.Keys["January"]; len(got) != 1 || got[0] != "Enero" {
+		t.Errorf("library mode must keep keys it cannot see in code:\n%s", raw)
+	}
 }
