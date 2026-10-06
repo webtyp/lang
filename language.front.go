@@ -8,5 +8,9 @@ func setDefaultLang(l lang) {
 }
 
 func getCurrentLang() lang {
+	if !explicitlySet {
+		defLang = resolveDefaultLang()
+		explicitlySet = true
+	}
 	return defLang
 }

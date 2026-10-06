@@ -2,9 +2,14 @@ package lang
 
 import "webtyp.com/fmt"
 
+// ScriptID is the id of the <script type="application/json"> element in which
+// the page carries the merged dictionary (written by langc, read here).
+const ScriptID = "webtyp-lang"
+
 // Private global configuration
 var (
 	defLang lang = EN
+	explicitlySet bool
 )
 
 // Language enumeration for supported languages
@@ -51,12 +56,26 @@ const (
 	RU // 8 - Russian
 )
 
+func resolveDefaultLang() lang {
+	loadFromPage()
+	sysLang := getSystemLang()
+	if pageSet {
+		for _, pl := range pageLangs {
+			if pl == sysLang {
+				return sysLang
+			}
+		}
+		return pageDef
+	}
+	return sysLang
+}
+
 // OutLang sets and returns the current output language as a string.
 func OutLang(l ...any) string {
 	if len(l) == 0 {
-		systemLang := getSystemLang()
-		setDefaultLang(systemLang)
-		return systemLang.String()
+		l := resolveDefaultLang()
+		setDefaultLang(l)
+		return l.String()
 	}
 
 	var newLang lang
@@ -70,6 +89,7 @@ func OutLang(l ...any) string {
 	}
 
 	setDefaultLang(newLang)
+	explicitlySet = true
 	return newLang.String()
 }
 

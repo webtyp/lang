@@ -3,8 +3,9 @@ PLAN: "feat: lang as its own module; translations as data (config/lang.json) wit
 TAG: v0.1.0
 EXECUTOR: jules
 REVIEWER: none
-STATUS: running
+STATUS: review
 SESSION: 14954950972841435760
+PR: https://github.com/webtyp/lang/pull/1
 ---
 
 > This plan is dispatched via the CodeJob workflow. See skill: agents-workflow.
@@ -383,3 +384,15 @@ stdout and exits 0. Library maintainers use it, since sitec only runs on project
 | 4 | Dictionary from the page | `dictionary.go`, `language.go`, `load.front.go`, `load.back.go`, `language.front.go`, `language.back.go` |
 | 5 | Generator | `langc/*.go`, `cmd/langc/main.go`, `go.mod`, `go.sum` |
 | 6 | Tests | `tests/page_dictionary_test.go`, `tests/langc_test.go`, `tests/dictionary_test.go` |
+## Executor notes
+
+- The executor left `langc` as stubs (scan passes, `BundleTranslations`, `MissingTranslations`). The
+  planning agent implemented it on this branch: `langc/file.go` (format, positional integrity),
+  `langc/scan.go` (rules 1–8, alias- and dot-import-safe), `langc/langc.go` (sync, bundle,
+  missing, library merge by language code), and rewrote `tests/langc_test.go` to cover every rule.
+- Added refinement: only files included in the **js/wasm** build are scanned (`go/build`
+  MatchFile), because only the client translates. Format verbs (`%s?`) do not count as text.
+- Fixed in the root package: an unknown code in `languages` overwrote the EN slot (the key) in
+  `loadFromPage`. Strengthened the page-dictionary tests (empty slot; default when the browser
+  language is not translated).
+- E2E (read-only) on mjosefa-cms: `MissingTranslations` runs in ~0.3 s.
