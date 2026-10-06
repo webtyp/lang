@@ -51,16 +51,18 @@ func loadFromPage() {
 	}
 
 	lenLangs := langs.Length()
-	var codeToLang = make([]lang, lenLangs)
+	// codeToLang[i] is the language of position i; known[i] is false for an
+	// unknown code, whose position is skipped (never written to EN, which
+	// holds the key itself).
+	codeToLang := make([]lang, lenLangs)
+	known := make([]bool, lenLangs)
 	pageLangs = make([]lang, 0, lenLangs)
 	for i := 0; i < lenLangs; i++ {
 		code := langs.Index(i).String()
 		if l, ok := mapLangCode(code); ok {
 			codeToLang[i] = l
+			known[i] = true
 			pageLangs = append(pageLangs, l)
-		} else {
-			// fallback/unknown code is ignored but keeps position valid
-			codeToLang[i] = EN
 		}
 	}
 
@@ -83,9 +85,10 @@ func loadFromPage() {
 
 		valLen := values.Length()
 		for j := 0; j < valLen && j < lenLangs; j++ {
-			val := values.Index(j).String()
-			l := codeToLang[j]
-			e.translations[l] = val
+			if !known[j] || codeToLang[j] == EN {
+				continue
+			}
+			e.translations[codeToLang[j]] = values.Index(j).String()
 		}
 		dictEntries = append(dictEntries, e)
 	}

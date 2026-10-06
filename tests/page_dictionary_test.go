@@ -16,7 +16,7 @@ func TestMain(m *testing.M) {
 		script := doc.Call("createElement", "script")
 		script.Set("type", "application/json")
 		script.Set("id", lang.ScriptID)
-		payload := `{"default":"es","languages":["es","fr"],"keys":{"Delete":["Eliminar","Supprimer"],"This":["Este","Ce"],"action":["acción","action"],"Pick a conversation":["Elige una conversación","Choisissez une conversation"],"name":["nombre","nom"],"required":["requerido","requis"]}}`
+		payload := `{"default":"es","languages":["es","fr"],"keys":{"Delete":["Eliminar","Supprimer"],"This":["Este","Ce"],"action":["acción","action"],"Pick a conversation":["Elige una conversación","Choisissez une conversation"],"name":["nombre","nom"],"required":["requerido","requis"],"Send":["",""]}}`
 		script.Set("textContent", payload)
 		doc.Get("head").Call("appendChild", script)
 	}
@@ -39,10 +39,16 @@ func TestPageDictionaryLoading(t *testing.T) {
 		}
 	})
 
-	t.Run("empty slot passes through", func(t *testing.T) {
+	t.Run("separate arguments are separate keys", func(t *testing.T) {
 		got := lang.Translate("es", "This", "action").String()
 		if got != "Este acción" {
 			t.Errorf("expected 'Este acción', got %q", got)
+		}
+	})
+
+	t.Run("empty slot passes through as English", func(t *testing.T) {
+		if got := lang.Translate("es", "Send").String(); got != "Send" {
+			t.Errorf("expected 'Send', got %q", got)
 		}
 	})
 
@@ -68,7 +74,13 @@ func TestPageDictionaryLoading(t *testing.T) {
 		}
 	})
 
-	t.Run("default outLang logic", func(t *testing.T) {
-		lang.OutLang()
+	t.Run("browser language not translated falls back to the page default", func(t *testing.T) {
+		nav := js.Global().Get("navigator").Get("language").String()
+		if nav == "es" || nav == "fr" || len(nav) > 1 && (nav[:2] == "es" || nav[:2] == "fr") {
+			t.Skip("browser language is in the page's languages:", nav)
+		}
+		if got := lang.OutLang(); got != "ES" {
+			t.Errorf("OutLang() = %q, want the page default ES (browser language %q is not translated)", got, nav)
+		}
 	})
 }
