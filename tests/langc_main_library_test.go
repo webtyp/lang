@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"webtyp.com/lang/langc"
+	"webtyp.com/modfind"
 )
 
 // fixture for a main library with a demo: a module example.com/demo with config/
@@ -71,7 +72,9 @@ func TestBundle_UsesMainModuleLibraryValue(t *testing.T) {
 	var out struct {
 		Keys map[string][]string `json:"keys"`
 	}
-	json.Unmarshal([]byte(bundle[strings.Index(bundle, ">")+1:strings.LastIndex(bundle, "<")]), &out)
+	if err := json.Unmarshal([]byte(bundle[strings.Index(bundle, ">")+1:strings.LastIndex(bundle, "<")]), &out); err != nil {
+		t.Fatalf("failed to unmarshal bundle json: %v", err)
+	}
 
 	if val := out.Keys["Confirmed"]; len(val) == 0 || val[0] != "Confirmada" {
 		t.Errorf("expected [Confirmada], got %v", val)
@@ -89,7 +92,9 @@ func TestBundle_ProjectValueWinsOverMainLibrary(t *testing.T) {
 	var out struct {
 		Keys map[string][]string `json:"keys"`
 	}
-	json.Unmarshal([]byte(bundle[strings.Index(bundle, ">")+1:strings.LastIndex(bundle, "<")]), &out)
+	if err := json.Unmarshal([]byte(bundle[strings.Index(bundle, ">")+1:strings.LastIndex(bundle, "<")]), &out); err != nil {
+		t.Fatalf("failed to unmarshal bundle json: %v", err)
+	}
 
 	if val := out.Keys["Confirmed"]; len(val) == 0 || val[0] != "Confirmado" {
 		t.Errorf("expected [Confirmado], got %v", val)
@@ -138,5 +143,58 @@ func TestLoad_BrokenMainLibraryFileIsSkipped(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected Confirmed to be missing because library dict is invalid")
+	}
+}
+
+func TestLoad_InvalidProjectDictionaryReturnsError(t *testing.T) {
+	app, mods := mainLibraryFixture(t)
+	write(t, filepath.Join(app, "config", "lang.json"), `invalid json`)
+	c := langc.New(mods, nil)
+	err := c.SyncTranslations(app)
+	if err == nil {
+		t.Fatal("expected error from invalid project dictionary")
+	}
+}
+
+type errorModules struct{}
+func (errorModules) Discover(string) ([]modfind.Module, error) { return nil, os.ErrPermission }
+
+func TestLoad_DiscoverErrorReturnsError(t *testing.T) {
+	app, _ := mainLibraryFixture(t)
+	c := langc.New(errorModules{}, nil)
+	_, err := c.MissingTranslations(app)
+	if err == nil {
+		t.Fatal("expected error from Discover")
+	}
+}
+
+func TestLoad_BrokenDependencyDictionaryIsSkipped(t *testing.T) {
+	app, baseMods := mainLibraryFixture(t)
+	lib := filepath.Join(filepath.Dir(app), "lib")
+	write(t, filepath.Join(lib, "go.mod"), "module example.com/lib\nrequire webtyp.com/lang v0.0.0\n")
+	write(t, filepath.Join(lib, "lang.json"), `invalid json`)
+	write(t, filepath.Join(lib, "lib.go"), `package lib
+import tr "webtyp.com/lang"
+func Do() { _ = tr.Text("LibKey") }
+`)
+	write(t, filepath.Join(app, "main.go"), `package main
+import "example.com/lib"
+func main() { lib.Do() }
+`)
+	mods := append(baseMods, modfind.Module{Path: "example.com/lib", Dir: lib, LocalDir: lib, IsMain: false})
+
+	c := langc.New(mods, nil)
+	missing, err := c.MissingTranslations(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range missing {
+		if m.Key == "LibKey" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected LibKey to be missing because dependency library dict is invalid")
 	}
 }

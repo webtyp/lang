@@ -77,10 +77,8 @@ func (t *Translations) load(rootDir string) (state, []modfind.Module, error) {
 		// A library that ships its own demo is a project (it has config/) AND a
 		// library: its root lang.json translates its own texts and must count.
 		own := filepath.Join(rootDir, fileName)
-		if own != st.path {
-			if d, _, ok, err := readDict(own, false); err == nil && ok && validate(own, d) == nil {
-				st.libs = append(st.libs, library{module: modulePath(rootDir), dict: d})
-			}
+		if d, _, ok, err := readDict(own, false); err == nil && ok && validate(own, d) == nil {
+			st.libs = append(st.libs, library{module: modulePath(rootDir), dict: d})
 		}
 		for _, m := range mods {
 			if m.IsMain || m.SourceDir() == "" {
