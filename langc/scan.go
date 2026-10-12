@@ -33,7 +33,7 @@ var clientBuild = func() build.Context {
 }()
 
 // skipDirs never hold code that reaches a build.
-var skipDirs = []string{"vendor", "node_modules", "testdata", "_temp"}
+var skipDirs = []string{"vendor", "node_modules", "testdata", "_temp", "tests", "conformance"}
 
 // prefilter: a file that imports no webtyp package cannot use any rule.
 var prefilter = []byte(`"webtyp.com/`)
