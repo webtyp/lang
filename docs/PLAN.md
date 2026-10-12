@@ -2,8 +2,9 @@
 PLAN: "fix(langc): a library that ships its own demo reads its own root lang.json"
 EXECUTOR: jules
 REVIEWER: none
-STATUS: running
+STATUS: review
 SESSION: 758863095557090062
+PR: https://github.com/webtyp/lang/pull/3
 ---
 
 > This plan is dispatched via the CodeJob workflow. See skill: agents-workflow.
