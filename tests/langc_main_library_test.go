@@ -157,6 +157,7 @@ func TestLoad_InvalidProjectDictionaryReturnsError(t *testing.T) {
 }
 
 type errorModules struct{}
+
 func (errorModules) Discover(string) ([]modfind.Module, error) { return nil, os.ErrPermission }
 
 func TestLoad_DiscoverErrorReturnsError(t *testing.T) {
