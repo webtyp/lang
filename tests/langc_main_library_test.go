@@ -199,3 +199,30 @@ func main() { lib.Do() }
 		t.Errorf("expected LibKey to be missing because dependency library dict is invalid")
 	}
 }
+
+// A library run on its own (no config/) ships a lang.json without "default": the bundle must still name one, or the
+// page follows the browser's language and never uses the dictionary.
+func TestBundle_LibraryWithoutDefaultUsesItsFirstLanguage(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "lib")
+	write(t, filepath.Join(lib, "go.mod"), "module example.com/lib\nrequire webtyp.com/lang v0.0.0\n")
+	write(t, filepath.Join(lib, "lang.json"), `{"languages":["es"],"keys":{"Name":["Nombre"]}}`)
+	write(t, filepath.Join(lib, "main.go"), `package main
+import tr "webtyp.com/lang"
+func main() { _ = tr.Text("Name") }
+`)
+	c := langc.New(fakeModules{{Path: "example.com/lib", Dir: lib, LocalDir: lib, IsMain: true}}, nil)
+	bundle, err := c.BundleTranslations(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Default string `json:"default"`
+	}
+	if err := json.Unmarshal([]byte(bundle[strings.Index(bundle, ">")+1:strings.LastIndex(bundle, "<")]), &out); err != nil {
+		t.Fatalf("failed to unmarshal bundle json: %v", err)
+	}
+	if out.Default != "es" {
+		t.Errorf("expected default es, got %q", out.Default)
+	}
+}

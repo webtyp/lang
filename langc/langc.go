@@ -377,7 +377,13 @@ func (t *Translations) BundleTranslations(rootDir string) (string, error) {
 			add(key)
 		}
 	}
-	payload, err := json.Marshal(langFile{Default: st.dict.Default, Languages: st.dict.Languages, Keys: keys})
+	// A library run on its own has no config/ and so no default: the page would then follow the browser's language and
+	// ignore the only dictionary it carries. The first language of the file is the one its authors translate into.
+	def := st.dict.Default
+	if def == "" && len(st.dict.Languages) > 0 {
+		def = st.dict.Languages[0]
+	}
+	payload, err := json.Marshal(langFile{Default: def, Languages: st.dict.Languages, Keys: keys})
 	if err != nil {
 		return "", err
 	}
