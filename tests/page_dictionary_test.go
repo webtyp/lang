@@ -20,7 +20,7 @@ func TestMain(m *testing.M) {
 		script := doc.Call("createElement", "script")
 		script.Set("type", "application/json")
 		script.Set("id", lang.ScriptID)
-		payload := `{"default":"es","languages":["es","fr"],"keys":{"Delete":["Eliminar","Supprimer"],"This":["Este","Ce"],"action":["acción","action"],"Pick a conversation":["Elige una conversación","Choisissez une conversation"],"name":["nombre","nom"],"required":["requerido","requis"],"Send":["",""]}}`
+		payload := `{"default":"es","languages":["es","fr"],"keys":{"Delete":["Eliminar","Supprimer"],"This":["Este","Ce"],"action":["acción","action"],"Pick a conversation":["Elige una conversación","Choisissez une conversation"],"name":["nombre","nom"],"Name":["Nombre","Nom"],"Prefix":["Prefijo","Préfixe"],"prefix":["prefijo","préfixe"],"Price":["Precio","Prix"],"price":["precio","prix"],"required":["requerido","requis"],"Send":["",""]}}`
 		script.Set("textContent", payload)
 		doc.Get("head").Call("appendChild", script)
 	}
@@ -29,6 +29,24 @@ func TestMain(m *testing.M) {
 }
 
 func TestPageDictionaryLoading(t *testing.T) {
+	// A dictionary may hold the same word twice, differing only in case: a field Label ("Prefix")
+	// and an args field Name ("prefix"). The exact key must win; the case-insensitive search used
+	// to return whichever of the two it reached first.
+	t.Run("exact case wins over a key differing only in case", func(t *testing.T) {
+		cases := [][2]string{{"Prefix", "Prefijo"}, {"prefix", "prefijo"}, {"Name", "Nombre"}, {"name", "nombre"}, {"Price", "Precio"}, {"price", "precio"}}
+		for _, c := range cases {
+			if got := lang.Translate("es", c[0]).String(); got != c[1] {
+				t.Errorf("Translate(%q) = %q, want %q", c[0], got, c[1])
+			}
+		}
+	})
+
+	t.Run("a key that exists only in another case still matches", func(t *testing.T) {
+		if got := lang.Translate("es", "DELETE").String(); got != "Eliminar" {
+			t.Errorf("Translate(DELETE) = %q, want Eliminar", got)
+		}
+	})
+
 	t.Run("basic lookup in ES", func(t *testing.T) {
 		got := lang.Translate("es", "Delete").String()
 		if got != "Eliminar" {

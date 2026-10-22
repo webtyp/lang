@@ -226,3 +226,39 @@ func main() { _ = tr.Text("Name") }
 		t.Errorf("expected default es, got %q", out.Default)
 	}
 }
+
+// A library run on its own (no config/) renders screens of its dependencies (crudview's "Cancel",
+// "Delete"): the bundle must carry their dictionaries too, or those texts show in English.
+func TestBundle_LibraryWithoutConfigMergesDependencyDictionaries(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "lib")
+	dep := filepath.Join(root, "dep")
+	write(t, filepath.Join(lib, "go.mod"), "module example.com/lib\nrequire webtyp.com/lang v0.0.0\n")
+	write(t, filepath.Join(lib, "lang.json"), `{"languages":["es"],"keys":{"Name":["Nombre"]}}`)
+	write(t, filepath.Join(lib, "main.go"), `package main
+import tr "webtyp.com/lang"
+func main() { _ = tr.Text("Name") }
+`)
+	write(t, filepath.Join(dep, "go.mod"), "module example.com/dep\nrequire webtyp.com/lang v0.0.0\n")
+	write(t, filepath.Join(dep, "lang.json"), `{"languages":["es"],"keys":{"Cancel":["Cancelar"],"Name":["Nombre de la dependencia"]}}`)
+	mods := fakeModules{
+		{Path: "example.com/lib", Dir: lib, LocalDir: lib, IsMain: true},
+		{Path: "example.com/dep", Dir: dep, LocalDir: dep, IsMain: false},
+	}
+	bundle, err := langc.New(mods, nil).BundleTranslations(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Keys map[string][]string `json:"keys"`
+	}
+	if err := json.Unmarshal([]byte(bundle[strings.Index(bundle, ">")+1:strings.LastIndex(bundle, "<")]), &out); err != nil {
+		t.Fatalf("failed to unmarshal bundle json: %v", err)
+	}
+	if got := out.Keys["Cancel"]; len(got) != 1 || got[0] != "Cancelar" {
+		t.Errorf("dependency key Cancel = %v, want [Cancelar]", got)
+	}
+	if got := out.Keys["Name"]; len(got) != 1 || got[0] != "Nombre" {
+		t.Errorf("the library's own value must win: Name = %v, want [Nombre]", got)
+	}
+}

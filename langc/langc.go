@@ -80,19 +80,35 @@ func (t *Translations) load(rootDir string) (state, []modfind.Module, error) {
 		if d, _, ok, err := readDict(own, false); err == nil && ok && validate(own, d) == nil {
 			st.libs = append(st.libs, library{module: modulePath(rootDir), dict: d})
 		}
-		for _, m := range mods {
-			if m.IsMain || m.SourceDir() == "" {
-				continue
-			}
-			p := filepath.Join(m.SourceDir(), fileName)
-			d, _, ok, err := readDict(p, false)
-			if err != nil || !ok || validate(p, d) != nil {
-				continue // a broken library file never blocks the project
-			}
-			st.libs = append(st.libs, library{module: m.Path, dict: d})
-		}
+		st.libs = append(st.libs, dependencyDicts(mods)...)
+		return st, mods, nil
 	}
+	// A library run on its own scans only itself, but its screens show texts of its dependencies
+	// (crudview's "Cancel", "Delete"): their dictionaries are merged too. Its own file still wins.
+	deps, err := t.modules.Discover(rootDir)
+	if err != nil {
+		return st, nil, err
+	}
+	st.libs = dependencyDicts(deps)
 	return st, mods, nil
+}
+
+// dependencyDicts reads the lang.json of every non-main module; a broken file is skipped, never
+// blocking the caller.
+func dependencyDicts(mods []modfind.Module) []library {
+	var out []library
+	for _, m := range mods {
+		if m.IsMain || m.SourceDir() == "" {
+			continue
+		}
+		p := filepath.Join(m.SourceDir(), fileName)
+		d, _, ok, err := readDict(p, false)
+		if err != nil || !ok || validate(p, d) != nil {
+			continue
+		}
+		out = append(out, library{module: m.Path, dict: d})
+	}
+	return out
 }
 
 // scope lists the modules to scan: for a project, the main module plus every

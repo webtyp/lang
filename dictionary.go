@@ -18,7 +18,7 @@ func lookupWord(word string, l lang) (string, bool) {
 		mid := low + (high-low)/2
 		cmp := compareCaseInsensitive(word, dictEntries[mid].translations[EN])
 		if cmp == 0 {
-			res := dictEntries[mid].translations[int(l)]
+			res := dictEntries[exactCase(word, mid)].translations[int(l)]
 			if res == "" {
 				return "", false
 			}
@@ -31,6 +31,23 @@ func lookupWord(word string, l lang) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// exactCase returns the index of the entry whose key is exactly word, among the neighbours of mid
+// that match it case-insensitively ("Prefix" and "prefix" are two keys with two translations);
+// mid itself when no key matches in exact case.
+func exactCase(word string, mid int) int {
+	for i := mid; i >= 0 && compareCaseInsensitive(word, dictEntries[i].translations[EN]) == 0; i-- {
+		if dictEntries[i].translations[EN] == word {
+			return i
+		}
+	}
+	for i := mid + 1; i < len(dictEntries) && compareCaseInsensitive(word, dictEntries[i].translations[EN]) == 0; i++ {
+		if dictEntries[i].translations[EN] == word {
+			return i
+		}
+	}
+	return mid
 }
 
 func sortDict() {
