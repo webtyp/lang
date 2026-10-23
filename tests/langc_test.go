@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"webtyp.com/lang"
 	"webtyp.com/lang/langc"
 	"webtyp.com/modfind"
 )
@@ -303,14 +304,65 @@ func init() { _ = fmt.Err("internal failure") }
 		t.Errorf("library mode must pick up fmt.Err in its own module")
 	}
 
-	// A library key no scan can see (a month name built at run time) is kept.
+	// A library key no scan can see (a month name built at run time) is kept,
+	// and its existing translation survives the library being widened to
+	// every language webtyp supports (a global framework: a library serves
+	// every consumer, so its own dictionary carries every supported language).
 	write(t, filepath.Join(lib, "lang.json"), `{"languages": ["es"], "keys": {"January": ["Enero"]}}`)
 	if err := tr.SyncTranslations(lib); err != nil {
 		t.Fatal(err)
 	}
 	d, raw = readDict(t, filepath.Join(lib, "lang.json"))
-	if got := d.Keys["January"]; len(got) != 1 || got[0] != "Enero" {
+	if got := d.Keys["January"]; len(got) != len(d.Languages) || got[0] != "Enero" {
 		t.Errorf("library mode must keep keys it cannot see in code:\n%s", raw)
+	}
+	if len(d.Languages) != len(lang.Supported())-1 {
+		t.Errorf("a library must be widened to every supported language except en, got %v", d.Languages)
+	}
+	for _, code := range d.Languages {
+		if code == "en" {
+			t.Errorf("en must never get a column: %v", d.Languages)
+		}
+	}
+}
+
+// TestSync_ReportsReusableWords: a library whose code builds two error
+// messages that duplicate the same leading words ("not a valid X") should be
+// nudged to extract the shared run into its own key instead — every
+// unreused phrase is dictionary rows and WASM binary bytes, in every
+// language, in every consumer.
+func TestSync_ReportsReusableWords(t *testing.T) {
+	_, lib, _ := fixture(t)
+	write(t, filepath.Join(lib, "bar", "bar.go"), `package bar
+
+import "webtyp.com/fmt"
+
+func ValidateInt(v string) error  { return fmt.Err("not a valid integer") }
+func ValidateFloat(v string) error { return fmt.Err("not a valid decimal number") }
+`)
+	if err := os.Remove(filepath.Join(lib, "lang.json")); err != nil {
+		t.Fatal(err)
+	}
+	var logs []string
+	tr := langc.New(fakeModules{{Path: "example.com/lib", Dir: lib, LocalDir: lib, IsMain: true}}, func(a ...any) {
+		parts := make([]string, len(a))
+		for i, v := range a {
+			b, _ := json.Marshal(v)
+			parts[i] = strings.Trim(string(b), `"`)
+		}
+		logs = append(logs, strings.Join(parts, " "))
+	})
+	if err := tr.SyncTranslations(lib); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, l := range logs {
+		if strings.Contains(l, "share not a valid —") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("sync must flag keys sharing 2+ leading words, got %v", logs)
 	}
 }
 

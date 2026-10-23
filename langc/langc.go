@@ -186,6 +186,30 @@ func (st state) libValue(key, code string) string {
 	return ""
 }
 
+// withSupportedLanguages returns existing with every lang.Supported() code
+// appended that it doesn't already have (order and existing values kept). "en"
+// is never added: the Go string literal that keys a translation already IS
+// the English text, so it needs no column of its own.
+func withSupportedLanguages(existing []string) []string {
+	out := existing
+	for _, code := range lang.Supported() {
+		if code == "en" {
+			continue
+		}
+		found := false
+		for _, have := range out {
+			if have == code {
+				found = true
+				break
+			}
+		}
+		if !found {
+			out = append(out, code)
+		}
+	}
+	return out
+}
+
 // SyncToolTranslations updates <rootDir>/lang.json for a backend tool: it scans
 // the module's BACKEND build (not js/wasm) and applies every rule, including
 // fmt.Err everywhere in the module. Same file shape and merge rules as a library.
@@ -197,25 +221,7 @@ func (t *Translations) SyncToolTranslations(rootDir string) error {
 
 	uses := scan(mods, build.Default, false)
 
-	supportedCodes := []string{}
-	for _, c := range lang.Supported() {
-		if c != "en" {
-			supportedCodes = append(supportedCodes, c)
-		}
-	}
-
-	for _, reqCode := range supportedCodes {
-		found := false
-		for _, exCode := range st.dict.Languages {
-			if exCode == reqCode {
-				found = true
-				break
-			}
-		}
-		if !found {
-			st.dict.Languages = append(st.dict.Languages, reqCode)
-		}
-	}
+	st.dict.Languages = withSupportedLanguages(st.dict.Languages)
 
 	n := len(st.dict.Languages)
 	keys := map[string][]string{}
@@ -247,6 +253,9 @@ func (t *Translations) SyncToolTranslations(rootDir string) error {
 		}
 	}
 	t.report(st, uses)
+	t.reportReuse(st)
+	t.reportEmbeddedData(st)
+	t.reportIdenticalValues(st)
 	return nil
 }
 
@@ -258,6 +267,15 @@ func (t *Translations) SyncTranslations(rootDir string) error {
 	st, mods, err := t.load(rootDir)
 	if err != nil {
 		return err
+	}
+	if !st.isProject {
+		// webtyp is a global framework: a library's own dictionary serves every
+		// consumer, so it carries every language the ecosystem supports. A
+		// project (an app) keeps full control of its own config/lang.json —
+		// BundleTranslations only ever emits the project's own languages
+		// (langc.go BundleTranslations), so this never bloats a consumer that
+		// wants fewer than all nine.
+		st.dict.Languages = withSupportedLanguages(st.dict.Languages)
 	}
 	uses := scan(mods, clientBuild, st.isProject)
 	n := len(st.dict.Languages)
@@ -293,6 +311,9 @@ func (t *Translations) SyncTranslations(rootDir string) error {
 		}
 	}
 	t.report(st, uses)
+	t.reportReuse(st)
+	t.reportEmbeddedData(st)
+	t.reportIdenticalValues(st)
 	return nil
 }
 
@@ -344,6 +365,148 @@ func (t *Translations) report(st state, uses keyUses) {
 			t.log("lang:", n, "untranslated ("+code+") — see", wpath.Tilde(st.path))
 		}
 	}
+}
+
+// reportReuse flags dictionary keys that duplicate each other's words instead
+// of reusing a shared one — every unreused phrase is a dictionary row AND
+// binary bytes in every WASM consumer, in every language. Two multi-word keys
+// that share a leading or trailing run of 2+ words (e.g. "not a valid
+// integer" / "not a valid decimal number" share "not a valid") are a sign the
+// call site should pass the shared run as its own fmt.Err argument and vary
+// only the rest — never fatal, same severity as the untranslated-count line.
+func (t *Translations) reportReuse(st state) {
+	type tokenized struct {
+		key   string
+		words []string
+	}
+	var multi []tokenized
+	for k := range st.dict.Keys {
+		if w := strings.Fields(k); len(w) >= 2 {
+			multi = append(multi, tokenized{key: k, words: w})
+		}
+	}
+	sort.Slice(multi, func(i, j int) bool { return multi[i].key < multi[j].key })
+
+	reported := map[string]bool{}
+	flag := func(frag string, a, b string) {
+		if reported[frag] {
+			return
+		}
+		reported[frag] = true
+		t.log("lang:", a, "and", b, "share", frag, "— extract it as its own key and reuse it, see", wpath.Tilde(st.path))
+	}
+	for i := 0; i < len(multi); i++ {
+		for j := i + 1; j < len(multi); j++ {
+			if p := commonRun(multi[i].words, multi[j].words, true); len(p) >= 2 {
+				flag(strings.Join(p, " "), multi[i].key, multi[j].key)
+			}
+			if s := commonRun(multi[i].words, multi[j].words, false); len(s) >= 2 {
+				flag(strings.Join(s, " "), multi[i].key, multi[j].key)
+			}
+		}
+	}
+}
+
+// reportEmbeddedData flags a key that embeds a comma-separated run of 3+ very
+// short tokens (2 characters or less each — "c, r, u, d"): a sign the key
+// hardcodes a literal/enum code list instead of passing it as data (a
+// variable built from the same constants the code already validates
+// against, e.g. a slice of {code, letter} pairs). A hardcoded list goes
+// stale the moment a code is added or renamed, and — worse — gets
+// "translated" into every language by mistake, when it should read the same
+// in all of them.
+func (t *Translations) reportEmbeddedData(st state) {
+	for k := range st.dict.Keys {
+		if run := shortCommaRun(k); run >= 3 {
+			t.log("lang: ERROR", k, "embeds a", run, "-item code list — pass it as data (a variable), not a literal, see", wpath.Tilde(st.path))
+		}
+	}
+}
+
+// shortCommaRun returns the length of the longest run of comma-separated
+// segments whose final word is 1-2 characters long (0 if none).
+func shortCommaRun(s string) int {
+	best, run := 0, 0
+	for _, part := range strings.Split(s, ",") {
+		word := strings.TrimSpace(part)
+		if i := strings.LastIndexByte(word, ' '); i >= 0 {
+			word = word[i+1:]
+		}
+		if len(word) >= 1 && len(word) <= 2 {
+			run++
+			if run > best {
+				best = run
+			}
+			continue
+		}
+		run = 0
+	}
+	return best
+}
+
+// reportIdenticalValues flags a key whose translated value ends in the exact
+// same run of words in EVERY language the dictionary carries (2+ languages,
+// all translated) — if nobody wrote anything different for it in any
+// language, it almost certainly isn't prose at all: it's a code, a symbol or
+// a number baked into an otherwise-translated phrase ("— the verbs are c, r,
+// u, d" ends in "c, r, u, d" unchanged in es/zh/hi/ar/pt/fr/de/ru). Pass it
+// as data (a variable) instead of writing it inside the literal.
+func (t *Translations) reportIdenticalValues(st state) {
+	n := len(st.dict.Languages)
+	if n < 2 {
+		return
+	}
+	for key, values := range st.dict.Keys {
+		if len(values) < n {
+			continue
+		}
+		run := strings.Fields(values[0])
+		complete := values[0] != ""
+		for _, v := range values[1:n] {
+			if v == "" {
+				complete = false
+				break
+			}
+			run = commonRun(run, strings.Fields(v), false)
+			if len(run) == 0 {
+				break
+			}
+		}
+		if !complete || len(run) == 0 {
+			continue
+		}
+		frag := strings.Join(run, " ")
+		if strings.HasSuffix(key, frag) {
+			t.log("lang: ERROR", key, "ends with", frag, "unchanged in every language — pass it as data (a variable), not a literal, see", wpath.Tilde(st.path))
+		}
+	}
+}
+
+// commonRun returns the longest shared leading (fromStart) or trailing run of
+// whole words between a and b.
+func commonRun(a, b []string, fromStart bool) []string {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	var run []string
+	for i := 0; i < n; i++ {
+		var wa, wb string
+		if fromStart {
+			wa, wb = a[i], b[i]
+		} else {
+			wa, wb = a[len(a)-1-i], b[len(b)-1-i]
+		}
+		if wa != wb {
+			break
+		}
+		if fromStart {
+			run = append(run, wa)
+		} else {
+			run = append([]string{wa}, run...)
+		}
+	}
+	return run
 }
 
 // MissingTranslations lists every key used by the code that has no translation
