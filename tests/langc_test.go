@@ -69,6 +69,7 @@ import (
 )
 
 var DeviceModel = model.Definition{Fields: model.Fields{
+	{Name: "id"},
 	{Name: "ip", Label: "IP address", Help: "Format: 192.168.1.1"},
 	{Name: "is_active"},
 }}
@@ -149,7 +150,7 @@ func TestSync_CreatesProjectFileWithEveryKeySource(t *testing.T) {
 			t.Errorf("missing key %q in\n%s", k, raw)
 		}
 	}
-	for _, k := range []string{"Ana", "%s?", "Pick", "conversation", "Delete", "Close"} {
+	for _, k := range []string{"Ana", "%s?", "Pick", "conversation", "Delete", "Close", "id"} {
 		if _, ok := d.Keys[k]; ok {
 			t.Errorf("key %q must not be in the project file:\n%s", k, raw)
 		}

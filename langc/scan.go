@@ -396,7 +396,7 @@ func (f *srcFile) fieldKeys(cl *ast.CompositeLit, uses keyUses) {
 	label, hasLabel := fieldLit(cl, "Label")
 	if hasLabel {
 		uses.add(label, f.module)
-	} else if name, ok := fieldLit(cl, "Name"); ok {
+	} else if name, ok := fieldLit(cl, "Name"); ok && !strings.EqualFold(name, "id") {
 		uses.add(strings.ReplaceAll(name, "_", " "), f.module) // what form shows: "is_active" → "is active"
 	}
 	if help, ok := fieldLit(cl, "Help"); ok {
