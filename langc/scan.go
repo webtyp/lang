@@ -24,10 +24,22 @@ const (
 	pathInput = "webtyp.com/input"
 )
 
-// clientBuild is the build context of the browser binary.
+// clientBuild is the build context of the browser binary: js/wasm with the
+// browser tag, as app builds it (client_builder_init.go). Without the tag a
+// server-only file (//go:build !browser) was read as browser code and every
+// browser.go was skipped.
 var clientBuild = func() build.Context {
 	c := build.Default
 	c.GOOS, c.GOARCH = "js", "wasm"
+	c.BuildTags = []string{"browser"}
+	c.CgoEnabled = false
+	return c
+}()
+
+// serverBuild is the build context of the app's server binary: a file in no
+// app build (config/deploy.go, tag deploy) is a tool.
+var serverBuild = func() build.Context {
+	c := build.Default
 	c.CgoEnabled = false
 	return c
 }()
@@ -72,6 +84,7 @@ func hasLetter(s string) bool {
 // srcFile is one parsed Go file with what the rules need to resolve names.
 type srcFile struct {
 	module  string // module path, recorded as the user of each key
+	main    bool   // belongs to the main module (a root of reachable)
 	pkgPath string // import path of the file's package
 	file    *ast.File
 	imports map[string]string // local name → import path
@@ -193,14 +206,29 @@ func parseModule(m modfind.Module, ctx build.Context) []*srcFile {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		if ok, err := ctx.MatchFile(filepath.Dir(path), d.Name()); err != nil || !ok {
+		inClient, err := ctx.MatchFile(filepath.Dir(path), d.Name())
+		if err != nil {
 			return nil
+		}
+		if !inClient {
+			// A server file's texts reach the browser too (an error an
+			// operation returns is translated there), so its imports count
+			// for reachable; its keys are not collected (as before).
+			if ok, err := serverBuild.MatchFile(filepath.Dir(path), d.Name()); err != nil || !ok {
+				return nil
+			}
 		}
 		src, err := os.ReadFile(path)
-		if err != nil || !bytes.Contains(src, prefilter) {
+		if err != nil {
 			return nil
 		}
-		af, err := parser.ParseFile(fset, path, src, parser.SkipObjectResolution)
+		// A file with no webtyp import cannot use any rule, but its imports
+		// still decide which packages the client build reaches (reachable).
+		mode := parser.SkipObjectResolution
+		if !inClient || !bytes.Contains(src, prefilter) {
+			mode |= parser.ImportsOnly
+		}
+		af, err := parser.ParseFile(fset, path, src, mode)
 		if err != nil {
 			return nil
 		}
@@ -209,10 +237,55 @@ func parseModule(m modfind.Module, ctx build.Context) []*srcFile {
 		if rel != "." {
 			pkgPath += "/" + filepath.ToSlash(rel)
 		}
-		files = append(files, newSrcFile(m.Path, pkgPath, af))
+		sf := newSrcFile(m.Path, pkgPath, af)
+		sf.main = m.IsMain
+		files = append(files, sf)
 		return nil
 	})
 	return files
+}
+
+// reachable keeps the files of the packages the project's code imports,
+// directly or through other scanned packages, from the client or the server
+// build. A module in the graph only because a file in neither build imports
+// it (config/deploy.go, tag deploy, importing gorelease) is a tool: its texts
+// never reach the app and do not belong in the project's dictionary.
+func reachable(files []*srcFile) []*srcFile {
+	byPkg := map[string][]*srcFile{}
+	for _, f := range files {
+		byPkg[f.pkgPath] = append(byPkg[f.pkgPath], f)
+	}
+	seen := map[string]bool{}
+	var queue []string
+	for _, f := range files {
+		if f.main && !seen[f.pkgPath] {
+			seen[f.pkgPath] = true
+			queue = append(queue, f.pkgPath)
+		}
+	}
+	for len(queue) > 0 {
+		pkg := queue[0]
+		queue = queue[1:]
+		for _, f := range byPkg[pkg] {
+			for _, is := range f.file.Imports {
+				p, err := strconv.Unquote(is.Path.Value)
+				if err != nil || seen[p] {
+					continue
+				}
+				if _, scanned := byPkg[p]; scanned {
+					seen[p] = true
+					queue = append(queue, p)
+				}
+			}
+		}
+	}
+	var out []*srcFile
+	for _, f := range files {
+		if seen[f.pkgPath] {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func newSrcFile(module, pkgPath string, af *ast.File) *srcFile {
@@ -290,6 +363,9 @@ func collectKeys(files []*srcFile, tf textFields, rule2Scope map[string]bool) ke
 			case *ast.CallExpr:
 				f.callKeys(x, uses, rule2Scope)
 			case *ast.CompositeLit:
+				if f.isWireDefinition(x) {
+					return false // a transport format (JSON-RPC message): its field names are no text
+				}
 				f.literalKeys(x, tf, uses)
 			case *ast.FuncDecl:
 				f.textReturns(x, uses)
@@ -346,6 +422,24 @@ func (f *srcFile) callKeys(call *ast.CallExpr, uses keyUses, rule2Scope map[stri
 			}
 		}
 	}
+}
+
+// isWireDefinition reports a model.Definition{Wire: true, ...} literal.
+func (f *srcFile) isWireDefinition(cl *ast.CompositeLit) bool {
+	if cl.Type == nil || !f.is(cl.Type, pathModel, "Definition") {
+		return false
+	}
+	for _, e := range cl.Elts {
+		kv, ok := e.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		if k, ok := kv.Key.(*ast.Ident); ok && k.Name == "Wire" {
+			v, ok := kv.Value.(*ast.Ident)
+			return ok && v.Name == "true"
+		}
+	}
+	return false
 }
 
 func (f *srcFile) literalKeys(cl *ast.CompositeLit, tf textFields, uses keyUses) {

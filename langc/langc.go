@@ -6,16 +6,19 @@ package langc
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"go/build"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	wpath "webtyp.com/filepath"
 	"webtyp.com/lang"
 	"webtyp.com/modfind"
+	"webtyp.com/msgtype"
 )
 
 // Translations keeps a project's config/lang.json (or a library's lang.json) in
@@ -23,6 +26,11 @@ import (
 type Translations struct {
 	modules modfind.Discoverer
 	log     func(...any)
+
+	mu       sync.Mutex
+	lastSeen map[string]string // dictionary path → diagnostics last reported for it
+	pending  []string          // diagnostics of the sync in progress
+	types    []msgtype.Type    // type of each pending diagnostic
 }
 
 // New returns a Translations that discovers the project's modules through
@@ -31,7 +39,45 @@ func New(modules modfind.Discoverer, log func(...any)) *Translations {
 	if log == nil {
 		log = func(...any) {}
 	}
-	return &Translations{modules: modules, log: log}
+	return &Translations{modules: modules, log: log, lastSeen: map[string]string{}}
+}
+
+// Name is the label of its lines in the dev TUI.
+func (t *Translations) Name() string { return "LANG" }
+
+// SetLog replaces the function diagnostics are reported through.
+func (t *Translations) SetLog(log func(...any)) {
+	if log == nil {
+		log = func(...any) {}
+	}
+	t.log = log
+}
+
+// note queues one diagnostic of the sync in progress; flush reports them.
+func (t *Translations) note(typ msgtype.Type, parts ...any) {
+	line := ""
+	for i, p := range parts {
+		if i > 0 {
+			line += " "
+		}
+		line += fmt.Sprint(p)
+	}
+	t.pending = append(t.pending, line)
+	t.types = append(t.types, typ)
+}
+
+// flush reports the queued diagnostics only when they differ from the ones
+// last reported for the same dictionary: a sync that finds the same problems
+// again (every module reload) says nothing new, so it says nothing.
+func (t *Translations) flush(path string) {
+	sig := strings.Join(t.pending, "\n")
+	if t.lastSeen[path] != sig {
+		t.lastSeen[path] = sig
+		for i, line := range t.pending {
+			t.log(t.types[i], line)
+		}
+	}
+	t.pending, t.types = nil, nil
 }
 
 // Missing is one untranslated key in one language, with the modules that use it.
@@ -173,6 +219,9 @@ func scan(mods []modfind.Module, ctx build.Context, isProject bool) keyUses {
 	for _, m := range mods {
 		files = append(files, parseModule(m, ctx)...)
 	}
+	if isProject {
+		files = reachable(files)
+	}
 	return collectKeys(files, collectTextFields(files), rule2Scope)
 }
 
@@ -252,10 +301,13 @@ func (t *Translations) SyncToolTranslations(rootDir string) error {
 			return err
 		}
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.report(st, uses)
 	t.reportReuse(st)
 	t.reportEmbeddedData(st)
 	t.reportIdenticalValues(st)
+	t.flush(st.path)
 	return nil
 }
 
@@ -278,26 +330,27 @@ func (t *Translations) SyncTranslations(rootDir string) error {
 		st.dict.Languages = withSupportedLanguages(st.dict.Languages)
 	}
 	uses := scan(mods, clientBuild, st.isProject)
+	if st.isProject {
+		return t.syncProject(rootDir, st, mods, uses)
+	}
 	n := len(st.dict.Languages)
 	keys := map[string][]string{}
 	for key := range uses {
 		existing, had := st.dict.Keys[key]
+		if st.fromDependency(key, existing) {
+			continue // translated once, lower in the graph (a shared column: "tenant id")
+		}
 		if had {
 			keys[key] = pad(existing, n)
 			continue
 		}
-		if st.isProject && st.allFromLibraries(key) {
-			continue // libraries already translate it for every project language
-		}
 		keys[key] = make([]string, n)
 	}
-	if !st.isProject {
-		// A library may translate texts it builds at run time (date's month
-		// names), which no scan can see: its existing keys are never removed.
-		for key, v := range st.dict.Keys {
-			if _, ok := keys[key]; !ok {
-				keys[key] = pad(v, n)
-			}
+	// A library may translate texts it builds at run time (date's month
+	// names), which no scan can see: its existing keys are never removed.
+	for key, v := range st.dict.Keys {
+		if _, ok := keys[key]; !ok && !st.fromDependency(key, v) {
+			keys[key] = pad(v, n)
 		}
 	}
 	st.dict.Keys = keys
@@ -310,20 +363,31 @@ func (t *Translations) SyncTranslations(rootDir string) error {
 			return err
 		}
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.report(st, uses)
 	t.reportReuse(st)
 	t.reportEmbeddedData(st)
 	t.reportIdenticalValues(st)
+	t.flush(st.path)
 	return nil
 }
 
-func (st state) allFromLibraries(key string) bool {
-	for _, code := range st.dict.Languages {
-		if st.libValue(key, code) == "" {
+// fromDependency reports whether a dependency already translates key and the
+// library's own values (own) say nothing different: then the key belongs to
+// the dependency alone. A different value is the library's and is kept.
+func (st state) fromDependency(key string, own []string) bool {
+	any := false
+	for i, code := range st.dict.Languages {
+		dep := st.libValue(key, code)
+		if dep != "" {
+			any = true
+		}
+		if i < len(own) && own[i] != "" && own[i] != dep {
 			return false
 		}
 	}
-	return true
+	return any
 }
 
 // missing lists the used keys with no translation (project, then libraries)
@@ -362,7 +426,7 @@ func (t *Translations) report(st state, uses keyUses) {
 	}
 	for _, code := range st.dict.Languages {
 		if n := count[code]; n > 0 {
-			t.log("lang:", n, "untranslated ("+code+") — see", wpath.Tilde(st.path))
+			t.note(msgtype.Warning, n, "untranslated ("+code+") — see", wpath.Tilde(st.path))
 		}
 	}
 }
@@ -393,7 +457,7 @@ func (t *Translations) reportReuse(st state) {
 			return
 		}
 		reported[frag] = true
-		t.log("lang:", a, "and", b, "share", frag, "— extract it as its own key and reuse it, see", wpath.Tilde(st.path))
+		t.note(msgtype.Warning, a, "and", b, "share", frag, "— extract it as its own key and reuse it, see", wpath.Tilde(st.path))
 	}
 	for i := 0; i < len(multi); i++ {
 		for j := i + 1; j < len(multi); j++ {
@@ -418,7 +482,7 @@ func (t *Translations) reportReuse(st state) {
 func (t *Translations) reportEmbeddedData(st state) {
 	for k := range st.dict.Keys {
 		if run := shortCommaRun(k); run >= 3 {
-			t.log("lang: ERROR", k, "embeds a", run, "-item code list — pass it as data (a variable), not a literal, see", wpath.Tilde(st.path))
+			t.note(msgtype.Error, k, "embeds a", run, "-item code list — pass it as data (a variable), not a literal, see", wpath.Tilde(st.path))
 		}
 	}
 }
@@ -477,7 +541,7 @@ func (t *Translations) reportIdenticalValues(st state) {
 		}
 		frag := strings.Join(run, " ")
 		if strings.HasSuffix(key, frag) {
-			t.log("lang: ERROR", key, "ends with", frag, "unchanged in every language — pass it as data (a variable), not a literal, see", wpath.Tilde(st.path))
+			t.note(msgtype.Error, key, "ends with", frag, "unchanged in every language — pass it as data (a variable), not a literal, see", wpath.Tilde(st.path))
 		}
 	}
 }

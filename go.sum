@@ -4,3 +4,5 @@ webtyp.com/fmt v1.0.0 h1:W0vMMGC6ezg1q2LarAEaVnNvZ26hVqzZdQQH1wcNogM=
 webtyp.com/fmt v1.0.0/go.mod h1:FmTxx713R45J21kbH5JOmKGaaCap3fJPA9Yl2n4Ch7U=
 webtyp.com/modfind v0.0.11 h1:CQDpcjHJNnBLSTYrlK5pEFZT54I91lXlIwXOpadVUcY=
 webtyp.com/modfind v0.0.11/go.mod h1:jEi1SwQK6pzP//tQkh6Jz+b4Kl/UtE6Iw9hH22UFRYI=
+webtyp.com/msgtype v0.1.0 h1:TQszRqVpn3tWMCt68ZGgehISd/SiEFd1JD/DF6cz+eI=
+webtyp.com/msgtype v0.1.0/go.mod h1:TuJTpQvEfe27S/Vy1TRWelCkSCyrOs8b9qJXSDe2HQ4=

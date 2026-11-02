@@ -119,9 +119,12 @@ func main() { _ = tr.Text("Confirmed") }
 	if _, err := os.Stat(filepath.Join(app, "lang.json")); !os.IsNotExist(err) {
 		t.Errorf("expected lang.json to not be created")
 	}
-	d, _ := readDict(t, filepath.Join(app, "config", "lang.json"))
-	if _, ok := d.Keys["Confirmed"]; !ok {
-		t.Errorf("expected Confirmed to be added as untranslated")
+	missing, err := c.MissingTranslations(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missing) != 1 || missing[0].Key != "Confirmed" {
+		t.Errorf("expected Confirmed reported untranslated, got %v", missing)
 	}
 }
 

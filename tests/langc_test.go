@@ -145,22 +145,32 @@ func TestSync_CreatesProjectFileWithEveryKeySource(t *testing.T) {
 		"Search devices",  // rule 8
 		"Saved", "Closed", // named constants (same package and imported)
 	}
-	for _, k := range want {
-		if _, ok := d.Keys[k]; !ok {
-			t.Errorf("missing key %q in\n%s", k, raw)
-		}
+	// An app's file is configuration only: the keys are what is reported
+	// untranslated, never written into it.
+	if len(d.Keys) != 0 {
+		t.Errorf("the project file must hold no keys:\n%s", raw)
 	}
-	for _, k := range []string{"Ana", "%s?", "Pick", "conversation", "Delete", "Close", "id"} {
-		if _, ok := d.Keys[k]; ok {
-			t.Errorf("key %q must not be in the project file:\n%s", k, raw)
+	missing, err := tr.MissingTranslations(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, m := range missing {
+		got[m.Key] = true
+	}
+	for _, k := range want {
+		if !got[k] {
+			t.Errorf("missing key %q in %v", k, missing)
 		}
 	}
 	// "Delete" and "Close" are translated by the library for every project
 	// language (es), matched by code although the library lists fr first.
-	if !strings.Contains(raw, `"IP address": [""]`) {
-		t.Errorf("each key must sit on one line as a positional list:\n%s", raw)
+	for _, k := range []string{"Ana", "%s?", "Pick", "conversation", "Delete", "Close", "id"} {
+		if got[k] {
+			t.Errorf("key %q must not be reported untranslated", k)
+		}
 	}
-	if len(logs) == 0 || !strings.Contains(logs[0], "untranslated (es)") {
+	if len(logs) == 0 || !strings.Contains(strings.Join(logs, "\n"), "untranslated") {
 		t.Errorf("sync must log what is untranslated, got %v", logs)
 	}
 }
@@ -448,5 +458,239 @@ func TestSyncToolMode_AppendsLanguages(t *testing.T) {
 
 	if got := d.Keys["Hola"]; len(got) != 8 || got[0] != "Hello" || got[1] != "" {
 		t.Errorf("expected 8 slots padded correctly, got %v", got)
+	}
+}
+
+// TestSync_SameDiagnosticsReportedOnce: every module reload syncs again; a
+// sync that finds the same problems must not repeat them in the TUI.
+func TestSync_SameDiagnosticsReportedOnce(t *testing.T) {
+	app, _, mods := fixture(t)
+	n := 0
+	tr := langc.New(mods, func(...any) { n++ })
+	for i := 0; i < 3; i++ {
+		if err := tr.SyncTranslations(app); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := n
+	if first == 0 {
+		t.Fatal("the first sync must report what is untranslated")
+	}
+	if err := tr.SyncTranslations(app); err != nil {
+		t.Fatal(err)
+	}
+	if n != first {
+		t.Errorf("unchanged diagnostics reported again: %d lines after 4 syncs, want %d", n, first)
+	}
+}
+
+// TestSync_ToolModuleOutsideClientBuild: a module the project imports only
+// from a file excluded from the client build (config/deploy.go, tag deploy)
+// is a tool — its texts must not land in the project's dictionary.
+func TestSync_ToolModuleOutsideClientBuild(t *testing.T) {
+	app, _, mods := fixture(t)
+	tool := filepath.Join(filepath.Dir(app), "tool")
+	write(t, filepath.Join(tool, "go.mod"), "module example.com/tool\nrequire webtyp.com/lang v0.0.0\n")
+	write(t, filepath.Join(tool, "tool.go"), `package tool
+
+import "webtyp.com/lang"
+
+func Check() string { return lang.Translate("Release requires a clean working tree").String() }
+`)
+	write(t, filepath.Join(app, "config", "deploy.go"), `//go:build deploy
+
+package config
+
+import "example.com/tool"
+
+var _ = tool.Check
+`)
+	// A package reached only from a server file still reaches the app: an
+	// error it returns is translated in the browser.
+	srv := filepath.Join(filepath.Dir(app), "srv")
+	write(t, filepath.Join(srv, "go.mod"), "module example.com/srv\nrequire webtyp.com/lang v0.0.0\n")
+	write(t, filepath.Join(srv, "srv.go"), `package srv
+
+import "webtyp.com/lang"
+
+func Label() string { return lang.Translate("sign count").String() }
+`)
+	write(t, filepath.Join(app, "web", "server", "main.go"), `//go:build !wasm
+
+package main
+
+import "example.com/srv"
+
+func main() { _ = srv.Label() }
+`)
+	mods = append(mods,
+		modfind.Module{Path: "example.com/tool", Dir: tool, LocalDir: tool},
+		modfind.Module{Path: "example.com/srv", Dir: srv, LocalDir: srv})
+	missing, err := langc.New(mods, nil).MissingTranslations(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, m := range missing {
+		got[m.Key] = true
+	}
+	if got["Release requires a clean working tree"] {
+		t.Errorf("a tool module's text must not count for the app: %v", missing)
+	}
+	if !got["sign count"] {
+		t.Errorf("a package reached from the server build must count: %v", missing)
+	}
+	if !got["Pick a conversation"] {
+		t.Errorf("the project's own keys must count: %v", missing)
+	}
+}
+
+// TestSync_ProjectTranslationMovesToItsLibrary: an app's config/lang.json is
+// configuration only. A translation it still holds moves, once, to the
+// lang.json of the library that uses the key — every app then gets it — and
+// a different translation already there is never overwritten.
+func TestSync_ProjectTranslationMovesToItsLibrary(t *testing.T) {
+	app, lib, mods := fixture(t)
+	write(t, filepath.Join(app, "config", "lang.json"), `{"default": "es", "languages": ["es"], "keys": {
+  "Find rooms": ["Buscar salas"],
+  "Close": ["Clausurar"],
+  "Pick a conversation": ["Elige una conversación"],
+  "Unused": ["Sin uso"]
+}}`)
+	write(t, filepath.Join(lib, "bar", "find.go"), `package bar
+
+import . "webtyp.com/lang"
+
+func Find() string { return Translate("Find rooms").String() }
+`)
+	if err := langc.New(mods, nil).SyncTranslations(app); err != nil {
+		t.Fatal(err)
+	}
+	ld, lraw := readDict(t, filepath.Join(lib, "lang.json"))
+	es := -1
+	for i, c := range ld.Languages {
+		if c == "es" {
+			es = i
+		}
+	}
+	if v := ld.Keys["Find rooms"]; es < 0 || len(v) <= es || v[es] != "Buscar salas" {
+		t.Errorf("the project's translation must move to the library:\n%s", lraw)
+	}
+	if v := ld.Keys["Close"]; v[es] != "Cerrar" {
+		t.Errorf("a library translation must never be overwritten:\n%s", lraw)
+	}
+	d, raw := readDict(t, filepath.Join(app, "config", "lang.json"))
+	if _, ok := d.Keys["Find rooms"]; ok {
+		t.Errorf("a moved key must leave the project file:\n%s", raw)
+	}
+	if _, ok := d.Keys["Unused"]; ok {
+		t.Errorf("a key used nowhere must leave the project file:\n%s", raw)
+	}
+	if _, ok := d.Keys["Close"]; !ok {
+		t.Errorf("a conflicting translation stays until a person keeps one:\n%s", raw)
+	}
+	if _, ok := d.Keys["Pick a conversation"]; !ok {
+		t.Errorf("the project's own text stays until it moves into a module:\n%s", raw)
+	}
+}
+
+// TestSync_LibraryDropsKeyItsDependencyTranslates: a shared column ("tenant
+// id") is translated once, in the dependency that declares it; a library that
+// uses it drops its copy unless it says something different.
+func TestSync_LibraryDropsKeyItsDependencyTranslates(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "lib")
+	base := filepath.Join(root, "base")
+	write(t, filepath.Join(base, "go.mod"), "module example.com/base\n")
+	write(t, filepath.Join(base, "lang.json"), `{"languages": ["es"], "keys": {"tenant id": ["id del inquilino"], "user id": ["id de usuario"]}}`)
+	write(t, filepath.Join(lib, "go.mod"), "module example.com/lib\nrequire webtyp.com/lang v0.0.0\n")
+	write(t, filepath.Join(lib, "lib.go"), `package lib
+
+import "webtyp.com/lang"
+
+var _ = []string{lang.Translate("tenant id").String(), lang.Translate("user id").String(), lang.Translate("Own").String()}
+`)
+	write(t, filepath.Join(lib, "lang.json"), `{"languages": ["es"], "keys": {"tenant id": ["id de tenant"], "user id": [""], "Own": ["Propio"]}}`)
+	mods := fakeModules{
+		{Path: "example.com/lib", Dir: lib, LocalDir: lib, IsMain: true},
+		{Path: "example.com/base", Dir: base, LocalDir: base},
+	}
+	if err := langc.New(mods, nil).SyncTranslations(lib); err != nil {
+		t.Fatal(err)
+	}
+	d, raw := readDict(t, filepath.Join(lib, "lang.json"))
+	if _, ok := d.Keys["user id"]; ok {
+		t.Errorf("a key the dependency translates must leave the library:\n%s", raw)
+	}
+	if _, ok := d.Keys["tenant id"]; !ok {
+		t.Errorf("a library value different from the dependency's stays:\n%s", raw)
+	}
+	if _, ok := d.Keys["Own"]; !ok {
+		t.Errorf("the library's own key stays:\n%s", raw)
+	}
+}
+
+// TestScan_ClientBuildIsTheBrowserBinary: the browser binary is built with
+// -tags browser. A server-only file (!browser) is not browser text; a
+// browser.go is.
+func TestScan_ClientBuildIsTheBrowserBinary(t *testing.T) {
+	app, _, mods := fixture(t)
+	write(t, filepath.Join(app, "ui", "server.go"), `//go:build !browser
+
+package ui
+
+import "webtyp.com/lang"
+
+var _ = lang.Translate("Server boot failed")
+`)
+	write(t, filepath.Join(app, "ui", "browser.go"), `//go:build browser
+
+package ui
+
+import "webtyp.com/lang"
+
+var _ = lang.Translate("Screen title")
+`)
+	missing, err := langc.New(mods, nil).MissingTranslations(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, m := range missing {
+		got[m.Key] = true
+	}
+	if got["Server boot failed"] {
+		t.Errorf("a !browser file is not browser text: %v", missing)
+	}
+	if !got["Screen title"] {
+		t.Errorf("a browser.go is browser text: %v", missing)
+	}
+}
+
+// TestScan_WireDefinitionIsNoText: a model.Definition{Wire: true} is a
+// transport format; its field names are protocol, never screen text.
+func TestScan_WireDefinitionIsNoText(t *testing.T) {
+	app, _, mods := fixture(t)
+	write(t, filepath.Join(app, "ui", "wire.go"), `package ui
+
+import "webtyp.com/model"
+
+var rpcModel = model.Definition{Name: "rpc", Wire: true, Fields: model.Fields{{Name: "jsonrpc"}, {Name: "next_cursor"}}}
+
+var formModel = model.Definition{Name: "contact", Fields: model.Fields{{Name: "phone_number"}}}
+`)
+	missing, err := langc.New(mods, nil).MissingTranslations(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, m := range missing {
+		got[m.Key] = true
+	}
+	if got["jsonrpc"] || got["next cursor"] {
+		t.Errorf("a Wire definition's fields are no text: %v", missing)
+	}
+	if !got["phone number"] {
+		t.Errorf("a regular definition's fields are text: %v", missing)
 	}
 }
