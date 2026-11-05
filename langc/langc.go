@@ -452,23 +452,61 @@ func (t *Translations) reportReuse(st state) {
 	sort.Slice(multi, func(i, j int) bool { return multi[i].key < multi[j].key })
 
 	reported := map[string]bool{}
-	flag := func(frag string, a, b string) {
+	flag := func(run []string, a, b string) {
+		if len(run) < 2 {
+			return
+		}
+		frag := strings.Join(run, " ")
 		if reported[frag] {
 			return
 		}
 		reported[frag] = true
-		t.note(msgtype.Warning, a, "and", b, "share", frag, "— extract it as its own key and reuse it, see", wpath.Tilde(st.path))
+		if _, isKey := st.dict.Keys[frag]; isKey {
+			t.note(msgtype.Warning, a, "and", b, "share", frag, "— it is already a key: reuse it, fmt.Err(\""+frag+"\", rest)", reuseDataHint, "see", wpath.Tilde(st.path))
+			return
+		}
+		t.note(msgtype.Warning, a, "and", b, "share", frag, "— extract it as its own key and reuse it: fmt.Err(\""+frag+"\", rest) at both call sites;", reuseDataHint, "see", wpath.Tilde(st.path))
 	}
 	for i := 0; i < len(multi); i++ {
 		for j := i + 1; j < len(multi); j++ {
-			if p := commonRun(multi[i].words, multi[j].words, true); len(p) >= 2 {
-				flag(strings.Join(p, " "), multi[i].key, multi[j].key)
-			}
-			if s := commonRun(multi[i].words, multi[j].words, false); len(s) >= 2 {
-				flag(strings.Join(s, " "), multi[i].key, multi[j].key)
-			}
+			// a shared run is cut where the two keys diverge; a connector on that edge ("and column",
+			// "required for") is not a phrase anyone can reuse — extracting it only spawns new overlaps.
+			flag(trimConnectors(commonRun(multi[i].words, multi[j].words, true), false), multi[i].key, multi[j].key)
+			flag(trimConnectors(commonRun(multi[i].words, multi[j].words, false), true), multi[i].key, multi[j].key)
 		}
 	}
+}
+
+// reuseDataHint ends every reuse warning: the usual way out is not a smaller key but data.
+const reuseDataHint = "a statement, type, field or code name in the rest is data (a variable), never a key;"
+
+// connectors are words that only link others; a shared run never starts or ends on one.
+var connectors = []string{"a", "an", "and", "are", "as", "at", "by", "for", "from", "in", "is", "of", "on", "or", "the", "to", "with"}
+
+// trimConnectors drops connector words from the edge where a shared run was cut: the start of a
+// trailing run (atStart) or the end of a leading run.
+func trimConnectors(run []string, atStart bool) []string {
+	isConnector := func(w string) bool {
+		w = strings.ToLower(strings.TrimRight(w, ",;:"))
+		for _, c := range connectors {
+			if w == c {
+				return true
+			}
+		}
+		return false
+	}
+	for len(run) > 0 {
+		if atStart && isConnector(run[0]) {
+			run = run[1:]
+			continue
+		}
+		if !atStart && isConnector(run[len(run)-1]) {
+			run = run[:len(run)-1]
+			continue
+		}
+		break
+	}
+	return run
 }
 
 // reportEmbeddedData flags a key that embeds a comma-separated run of 3+ very

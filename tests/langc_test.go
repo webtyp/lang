@@ -377,6 +377,92 @@ func ValidateFloat(v string) error { return fmt.Err("not a valid decimal number"
 	}
 }
 
+// reuseLogs syncs a library whose code is body and returns every line langc logged.
+func reuseLogs(t *testing.T, body string) []string {
+	t.Helper()
+	_, lib, _ := fixture(t)
+	write(t, filepath.Join(lib, "bar", "bar.go"), body)
+	if err := os.Remove(filepath.Join(lib, "lang.json")); err != nil {
+		t.Fatal(err)
+	}
+	var logs []string
+	tr := langc.New(fakeModules{{Path: "example.com/lib", Dir: lib, LocalDir: lib, IsMain: true}}, func(a ...any) {
+		parts := make([]string, len(a))
+		for i, v := range a {
+			b, _ := json.Marshal(v)
+			parts[i] = strings.Trim(string(b), `"`)
+		}
+		logs = append(logs, strings.Join(parts, " "))
+	})
+	if err := tr.SyncTranslations(lib); err != nil {
+		t.Fatal(err)
+	}
+	return logs
+}
+
+func shareLines(logs []string) []string {
+	var out []string
+	for _, l := range logs {
+		if strings.Contains(l, " share ") {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// TestSync_ReuseIgnoresConnectorEdges: "table and column" / "table, old name and column" share only
+// "and column", and "required for add column" / "required for copy column" only "required for" and
+// "column" — none is a phrase anyone can reuse; flagging them sent an agent splitting keys in circles.
+func TestSync_ReuseIgnoresConnectorEdges(t *testing.T) {
+	logs := reuseLogs(t, `package bar
+
+import "webtyp.com/fmt"
+
+func A() error { return fmt.Err("table and column") }
+func B() error { return fmt.Err("table, old name and column") }
+func C() error { return fmt.Err("required for add column") }
+func D() error { return fmt.Err("required for copy column") }
+`)
+	if got := shareLines(logs); len(got) != 0 {
+		t.Fatalf("connector-edged overlaps must not be flagged, got %v", got)
+	}
+}
+
+// TestSync_ReuseSaysHowToFix: the warning carries the call to write and the data rule, so the
+// fix needs no guessing.
+func TestSync_ReuseSaysHowToFix(t *testing.T) {
+	got := shareLines(reuseLogs(t, `package bar
+
+import "webtyp.com/fmt"
+
+func ValidateInt(v string) error  { return fmt.Err("not a valid integer") }
+func ValidateFloat(v string) error { return fmt.Err("not a valid decimal number") }
+`))
+	if len(got) != 1 {
+		t.Fatalf("want 1 reuse warning, got %v", got)
+	}
+	for _, want := range []string{"share not a valid —", `fmt.Err(\"not a valid\", rest)`, "data (a variable), never a key"} {
+		if !strings.Contains(got[0], want) {
+			t.Errorf("warning %q lacks %q", got[0], want)
+		}
+	}
+}
+
+// TestSync_ReusePointsToExistingKey: when the shared run is already a key, the warning says so
+// instead of asking to extract it again.
+func TestSync_ReusePointsToExistingKey(t *testing.T) {
+	got := shareLines(reuseLogs(t, `package bar
+
+import "webtyp.com/fmt"
+
+func A() error { return fmt.Err("not a valid") }
+func B() error { return fmt.Err("not a valid integer") }
+`))
+	if len(got) != 1 || !strings.Contains(got[0], "already a key: reuse it") {
+		t.Fatalf("want one warning pointing to the existing key, got %v", got)
+	}
+}
+
 func TestSyncToolMode(t *testing.T) {
 	root := t.TempDir()
 	tool := filepath.Join(root, "tool")
