@@ -70,10 +70,16 @@ func (t *Translations) note(typ msgtype.Type, parts ...any) {
 // last reported for the same dictionary: a sync that finds the same problems
 // again (every module reload) says nothing new, so it says nothing.
 func (t *Translations) flush(path string) {
-	sig := strings.Join(t.pending, "\n")
-	if t.lastSeen[path] != sig {
-		t.lastSeen[path] = sig
-		for i, line := range t.pending {
+	prev := strings.Split(t.lastSeen[path], "\n")
+	seen := make(map[string]bool, len(prev))
+	for _, p := range prev {
+		if p != "" {
+			seen[p] = true
+		}
+	}
+	t.lastSeen[path] = strings.Join(t.pending, "\n")
+	for i, line := range t.pending {
+		if !seen[line] {
 			t.log(t.types[i], line)
 		}
 	}
@@ -426,7 +432,7 @@ func (t *Translations) report(st state, uses keyUses) {
 	}
 	for _, code := range st.dict.Languages {
 		if n := count[code]; n > 0 {
-			t.note(msgtype.Warning, n, "untranslated ("+code+") — see", wpath.Tilde(st.path))
+			t.note(msgtype.Warning, n, "untranslated ("+code+") in", wpath.Tilde(st.path))
 		}
 	}
 }

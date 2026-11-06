@@ -164,7 +164,7 @@ func (t *Translations) reportLibraryGaps(st state, uses keyUses, owners map[stri
 		}
 		for _, code := range st.dict.Languages {
 			if c := gaps[m][code]; c > 0 {
-				t.note(msgtype.Warning, c, "untranslated ("+code+") in", m, "— see", where)
+				t.note(msgtype.Warning, c, "untranslated ("+code+") in", where)
 			}
 		}
 	}
