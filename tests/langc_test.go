@@ -231,6 +231,15 @@ func TestSync_PositionalIntegrity(t *testing.T) {
 	if err := tr.SyncTranslations(app); err == nil || !strings.Contains(err.Error(), `"xx"`) {
 		t.Errorf("an unknown language code must fail naming it, got %v", err)
 	}
+
+	dup := `{"default": "es", "languages": ["es"], "keys": {"This": ["Esta"], "This": ["Esta2"]}}`
+	write(t, path, dup)
+	if err := tr.SyncTranslations(app); err == nil || !strings.Contains(err.Error(), "duplicate key") || !strings.Contains(err.Error(), `"This"`) {
+		t.Errorf("a duplicate key must fail naming the key, got %v", err)
+	}
+	if raw, _ := os.ReadFile(path); string(raw) != dup {
+		t.Error("a failing sync on duplicate key must leave the file untouched")
+	}
 }
 
 func TestBundle_MergesLibrariesProjectWinsAndEscapes(t *testing.T) {

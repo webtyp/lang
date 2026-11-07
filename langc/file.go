@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -51,6 +52,9 @@ func readDict(path string, isProject bool) (f langFile, raw []byte, exists bool,
 	if err != nil {
 		return f, nil, false, err
 	}
+	if err := checkDuplicateKeys(raw); err != nil {
+		return f, raw, true, fmt.Errorf("lang: %s: %w", path, err)
+	}
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return f, raw, true, fmt.Errorf("lang: %s: %w", path, err)
 	}
@@ -58,6 +62,84 @@ func readDict(path string, isProject bool) (f langFile, raw []byte, exists bool,
 		f.Keys = map[string][]string{}
 	}
 	return f, raw, true, nil
+}
+
+// checkDuplicateKeys scans raw JSON for duplicate keys at any object level.
+func checkDuplicateKeys(raw []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	type frame struct {
+		isObject  bool
+		expectKey bool
+		seen      map[string]bool
+	}
+	var stack []frame
+
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		if len(stack) > 0 {
+			top := &stack[len(stack)-1]
+			if top.isObject && top.expectKey {
+				switch t := tok.(type) {
+				case json.Delim:
+					if t == '}' {
+						stack = stack[:len(stack)-1]
+						if len(stack) > 0 && stack[len(stack)-1].isObject {
+							stack[len(stack)-1].expectKey = true
+						}
+						continue
+					}
+					return fmt.Errorf("expected string key in object, got %s", t)
+				case string:
+					if top.seen[t] {
+						return fmt.Errorf("duplicate key %q", t)
+					}
+					top.seen[t] = true
+					top.expectKey = false
+					continue
+				default:
+					return fmt.Errorf("expected string key in object, got %v", tok)
+				}
+			}
+		}
+
+		switch t := tok.(type) {
+		case json.Delim:
+			switch t {
+			case '{':
+				stack = append(stack, frame{isObject: true, expectKey: true, seen: make(map[string]bool)})
+			case '[':
+				stack = append(stack, frame{isObject: false})
+			case '}':
+				if len(stack) == 0 || !stack[len(stack)-1].isObject {
+					return fmt.Errorf("unexpected '}'")
+				}
+				stack = stack[:len(stack)-1]
+				if len(stack) > 0 && stack[len(stack)-1].isObject {
+					stack[len(stack)-1].expectKey = true
+				}
+			case ']':
+				if len(stack) == 0 || stack[len(stack)-1].isObject {
+					return fmt.Errorf("unexpected ']'")
+				}
+				stack = stack[:len(stack)-1]
+				if len(stack) > 0 && stack[len(stack)-1].isObject {
+					stack[len(stack)-1].expectKey = true
+				}
+			}
+		default:
+			if len(stack) > 0 && stack[len(stack)-1].isObject {
+				stack[len(stack)-1].expectKey = true
+			}
+		}
+	}
+	return nil
 }
 
 // validate checks the positional integrity of a dictionary: known, unique
