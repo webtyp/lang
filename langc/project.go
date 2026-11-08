@@ -27,7 +27,7 @@ func (t *Translations) syncProject(rootDir string, st state, mods []modfind.Modu
 	}
 	edits := map[string]*libEdit{}
 	var notes []note
-	var own []string                    // translated texts only the project uses
+	var own []string                   // translated texts only the project uses
 	conflicts := map[string][]string{} // "key (code)" → "module says X"
 	projectSays := map[string]string{}
 	kept := map[string][]string{}
@@ -162,10 +162,18 @@ func (t *Translations) reportLibraryGaps(st state, uses keyUses, owners map[stri
 		if d := owners[m].SourceDir(); d != "" {
 			where = wpath.Tilde(filepath.Join(d, fileName))
 		}
+		var langs []string
+		most := 0
 		for _, code := range st.dict.Languages {
 			if c := gaps[m][code]; c > 0 {
-				t.note(msgtype.Warning, c, "untranslated ("+code+") in", where)
+				langs = append(langs, code)
+				if c > most {
+					most = c
+				}
 			}
+		}
+		if len(langs) > 0 {
+			t.note(msgtype.Warning, most, "untranslated in", strings.Join(langs, ", "), "—", where)
 		}
 	}
 }

@@ -301,7 +301,16 @@ func TestMissing_ListsModules(t *testing.T) {
 func TestSync_LibraryMode(t *testing.T) {
 	_, lib, _ := fixture(t)
 	write(t, filepath.Join(lib, "ui.go"), `package lib
-import "webtyp.com/fmt"
+import (
+	"webtyp.com/fmt"
+	"webtyp.com/model"
+)
+const (
+	ErrNoRecords model.Invalid  = "crud: no records to save"
+	ErrNoIDs     model.Invalid  = "crud: no ids given"
+	ErrMissing   model.NotFound = "item not found"
+)
+var ErrDup = model.Conflict("duplicate item")
 func init() { _ = fmt.Err("internal failure") }
 `)
 
@@ -320,8 +329,10 @@ func init() { _ = fmt.Err("internal failure") }
 		t.Errorf("library keys must be collected from its own code:\n%s", raw)
 	}
 
-	if _, ok := d.Keys["internal failure"]; !ok {
-		t.Errorf("library mode must pick up fmt.Err in its own module")
+	for _, wantKey := range []string{"internal failure", "crud: no records to save", "crud: no ids given", "item not found", "duplicate item"} {
+		if _, ok := d.Keys[wantKey]; !ok {
+			t.Errorf("library mode must pick up %q in its own module:\n%s", wantKey, raw)
+		}
 	}
 
 	// A library key no scan can see (a month name built at run time) is kept,
@@ -377,7 +388,7 @@ func ValidateFloat(v string) error { return fmt.Err("not a valid decimal number"
 	}
 	found := false
 	for _, l := range logs {
-		if strings.Contains(l, "share not a valid —") {
+		if strings.Contains(l, "share 'not a valid'") {
 			found = true
 		}
 	}
@@ -431,6 +442,8 @@ func A() error { return fmt.Err("table and column") }
 func B() error { return fmt.Err("table, old name and column") }
 func C() error { return fmt.Err("required for add column") }
 func D() error { return fmt.Err("required for copy column") }
+func E() error { return fmt.Err("crud: no records to save") }
+func F() error { return fmt.Err("crud: no ids given") }
 `)
 	if got := shareLines(logs); len(got) != 0 {
 		t.Fatalf("connector-edged overlaps must not be flagged, got %v", got)
@@ -450,7 +463,7 @@ func ValidateFloat(v string) error { return fmt.Err("not a valid decimal number"
 	if len(got) != 1 {
 		t.Fatalf("want 1 reuse warning, got %v", got)
 	}
-	for _, want := range []string{"share not a valid —", `fmt.Err(\"not a valid\", rest)`, "data (a variable), never a key"} {
+	for _, want := range []string{"share 'not a valid'", `fmt.Err(\"not a valid\", {decimal number | integer})`} {
 		if !strings.Contains(got[0], want) {
 			t.Errorf("warning %q lacks %q", got[0], want)
 		}
@@ -467,7 +480,7 @@ import "webtyp.com/fmt"
 func A() error { return fmt.Err("not a valid") }
 func B() error { return fmt.Err("not a valid integer") }
 `))
-	if len(got) != 1 || !strings.Contains(got[0], "already a key: reuse it") {
+	if len(got) != 1 || !strings.Contains(got[0], "already a key, reuse it") {
 		t.Fatalf("want one warning pointing to the existing key, got %v", got)
 	}
 }
@@ -787,5 +800,31 @@ var formModel = model.Definition{Name: "contact", Fields: model.Fields{{Name: "p
 	}
 	if !got["phone number"] {
 		t.Errorf("a regular definition's fields are text: %v", missing)
+	}
+}
+
+// TestSync_ReportsPlaceholderRepeatedAcrossLanguages: a value written in 3+
+// languages of one key ("fake" filler) is a placeholder, never a translation.
+func TestSync_ReportsPlaceholderRepeatedAcrossLanguages(t *testing.T) {
+	_, lib, _ := fixture(t)
+	write(t, filepath.Join(lib, "lang.json"), `{"languages": ["es", "fr", "de", "pt"], "keys": {"Close": ["Cerrar", "fake", "fake", "fake"], "Delete": ["Eliminar", "Supprimer", "Löschen", "Eliminar"]}}`)
+	var logs []string
+	tr := langc.New(fakeModules{{Path: "example.com/lib", Dir: lib, LocalDir: lib, IsMain: true}}, func(a ...any) {
+		parts := make([]string, len(a))
+		for i, v := range a {
+			b, _ := json.Marshal(v)
+			parts[i] = strings.Trim(string(b), `"`)
+		}
+		logs = append(logs, strings.Join(parts, " "))
+	})
+	if err := tr.SyncTranslations(lib); err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(logs, "\n")
+	if !strings.Contains(all, "1 keys have placeholder fake in 3+ languages") {
+		t.Fatalf("placeholder repeated in 3 languages not reported:\n%s", all)
+	}
+	if strings.Contains(all, "2 keys have placeholder") {
+		t.Errorf("a value shared by only 2 languages (es/pt cognate) must not be flagged:\n%s", all)
 	}
 }

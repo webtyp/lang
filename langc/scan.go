@@ -360,6 +360,8 @@ func collectKeys(files []*srcFile, tf textFields, rule2Scope map[string]bool) ke
 		f := f
 		ast.Inspect(f.file, func(n ast.Node) bool {
 			switch x := n.(type) {
+			case *ast.ValueSpec:
+				f.modelErrorSpecKeys(x, uses, rule2Scope)
 			case *ast.CallExpr:
 				f.callKeys(x, uses, rule2Scope)
 			case *ast.CompositeLit:
@@ -376,8 +378,26 @@ func collectKeys(files []*srcFile, tf textFields, rule2Scope map[string]bool) ke
 	return uses
 }
 
+func (f *srcFile) isModelError(e ast.Expr) bool {
+	return f.is(e, pathModel, "Invalid") || f.is(e, pathModel, "NotFound") || f.is(e, pathModel, "Conflict")
+}
+
+func (f *srcFile) modelErrorSpecKeys(vs *ast.ValueSpec, uses keyUses, rule2Scope map[string]bool) {
+	if vs.Type == nil || !f.isModelError(vs.Type) {
+		return
+	}
+	if rule2Scope != nil && !rule2Scope[f.module] {
+		return
+	}
+	for _, v := range vs.Values {
+		if s, ok := f.textArg(v); ok {
+			uses.add(s, f.module)
+		}
+	}
+}
+
 func (f *srcFile) callKeys(call *ast.CallExpr, uses keyUses, rule2Scope map[string]bool) {
-	// Rule 1: lang.Translate("...", ...). Rule 2: fmt.Err("...", ...).
+	// Rule 1: lang.Translate("...", ...). Rule 2: fmt.Err("...", ...) and model.{Invalid,NotFound,Conflict}.
 	// Rule 7 (conversions): lang.Text("...").
 
 	if f.is(call.Fun, pathLang, "Translate") || f.is(call.Fun, pathLang, "Text") {
@@ -389,7 +409,7 @@ func (f *srcFile) callKeys(call *ast.CallExpr, uses keyUses, rule2Scope map[stri
 		return
 	}
 
-	if f.is(call.Fun, pathFmt, "Err") {
+	if f.is(call.Fun, pathFmt, "Err") || f.isModelError(call.Fun) {
 		if rule2Scope != nil && !rule2Scope[f.module] {
 			return
 		}

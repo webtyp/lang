@@ -78,10 +78,21 @@ func (t *Translations) flush(path string) {
 		}
 	}
 	t.lastSeen[path] = strings.Join(t.pending, "\n")
+	// One log call per severity: its label prints once, not once per line.
+	var order []msgtype.Type
+	batch := map[msgtype.Type][]string{}
 	for i, line := range t.pending {
-		if !seen[line] {
-			t.log(t.types[i], line)
+		if seen[line] {
+			continue
 		}
+		typ := t.types[i]
+		if _, ok := batch[typ]; !ok {
+			order = append(order, typ)
+		}
+		batch[typ] = append(batch[typ], line)
+	}
+	for _, typ := range order {
+		t.log(typ, strings.Join(batch[typ], "\n"))
 	}
 	t.pending, t.types = nil, nil
 }
@@ -430,10 +441,19 @@ func (t *Translations) report(st state, uses keyUses) {
 	for _, m := range st.missing(uses) {
 		count[m.Language]++
 	}
+	// One line per dictionary: the same count in every language is one fact.
+	var langs []string
+	most := 0
 	for _, code := range st.dict.Languages {
 		if n := count[code]; n > 0 {
-			t.note(msgtype.Warning, n, "untranslated ("+code+") in", wpath.Tilde(st.path))
+			langs = append(langs, code)
+			if n > most {
+				most = n
+			}
 		}
+	}
+	if len(langs) > 0 {
+		t.note(msgtype.Warning, most, "untranslated in", strings.Join(langs, ", "), `(empty "" values in the dictionary)`)
 	}
 }
 
@@ -467,11 +487,19 @@ func (t *Translations) reportReuse(st state) {
 			return
 		}
 		reported[frag] = true
-		if _, isKey := st.dict.Keys[frag]; isKey {
-			t.note(msgtype.Warning, a, "and", b, "share", frag, "— it is already a key: reuse it, fmt.Err(\""+frag+"\", rest)", reuseDataHint, "see", wpath.Tilde(st.path))
-			return
+		rest := func(k string) string {
+			return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(k, frag), frag))
 		}
-		t.note(msgtype.Warning, a, "and", b, "share", frag, "— extract it as its own key and reuse it: fmt.Err(\""+frag+"\", rest) at both call sites;", reuseDataHint, "see", wpath.Tilde(st.path))
+		verb := "extract it:"
+		if _, isKey := st.dict.Keys[frag]; isKey {
+			verb = "already a key, reuse it:"
+		}
+		ra, rb := rest(a), rest(b)
+		call := "fmt.Err(\"" + frag + "\", rest)"
+		if ra != "" && rb != "" {
+			call = "fmt.Err(\"" + frag + "\", {" + ra + " | " + rb + "})"
+		}
+		t.note(msgtype.Warning, "'"+a+"' and '"+b+"' share '"+frag+"' —", verb, call)
 	}
 	for i := 0; i < len(multi); i++ {
 		for j := i + 1; j < len(multi); j++ {
@@ -483,11 +511,8 @@ func (t *Translations) reportReuse(st state) {
 	}
 }
 
-// reuseDataHint ends every reuse warning: the usual way out is not a smaller key but data.
-const reuseDataHint = "a statement, type, field or code name in the rest is data (a variable), never a key;"
-
 // connectors are words that only link others; a shared run never starts or ends on one.
-var connectors = []string{"a", "an", "and", "are", "as", "at", "by", "for", "from", "in", "is", "of", "on", "or", "the", "to", "with"}
+var connectors = []string{"a", "an", "and", "are", "as", "at", "by", "for", "from", "in", "is", "no", "of", "on", "or", "the", "to", "with"}
 
 // trimConnectors drops connector words from the edge where a shared run was cut: the start of a
 // trailing run (atStart) or the end of a leading run.
@@ -560,6 +585,7 @@ func shortCommaRun(s string) int {
 // u, d" ends in "c, r, u, d" unchanged in es/zh/hi/ar/pt/fr/de/ru). Pass it
 // as data (a variable) instead of writing it inside the literal.
 func (t *Translations) reportIdenticalValues(st state) {
+	t.reportRepeatedPlaceholders(st)
 	n := len(st.dict.Languages)
 	if n < 2 {
 		return
@@ -675,4 +701,40 @@ func (t *Translations) BundleTranslations(rootDir string) (string, error) {
 		return "", err
 	}
 	return `<script type="application/json" id="` + lang.ScriptID + `">` + string(payload) + `</script>`, nil
+}
+
+// reportRepeatedPlaceholders flags a key whose same non-empty value appears in
+// 3+ languages (e.g. "fake" filler written by an agent instead of a real
+// translation). Two languages may legitimately share a cognate (es/pt); three
+// or more is a placeholder. A value equal to the key itself is exempt.
+func (t *Translations) reportRepeatedPlaceholders(st state) {
+	n := len(st.dict.Languages)
+	byValue := map[string][]string{}
+	for key, values := range st.dict.Keys {
+		if len(values) > n {
+			values = values[:n]
+		}
+		count := map[string]int{}
+		for _, v := range values {
+			if v != "" && v != key {
+				count[v]++
+			}
+		}
+		for _, v := range values {
+			if count[v] >= 3 {
+				byValue[v] = append(byValue[v], key)
+				break
+			}
+		}
+	}
+	vals := make([]string, 0, len(byValue))
+	for v := range byValue {
+		vals = append(vals, v)
+	}
+	sort.Strings(vals)
+	for _, v := range vals {
+		keys := byValue[v]
+		sort.Strings(keys)
+		t.note(msgtype.Error, len(keys), "keys have placeholder", v, "in 3+ languages — translate them (grep it in the dictionary)")
+	}
 }
