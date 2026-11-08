@@ -807,7 +807,7 @@ var formModel = model.Definition{Name: "contact", Fields: model.Fields{{Name: "p
 // languages of one key ("fake" filler) is a placeholder, never a translation.
 func TestSync_ReportsPlaceholderRepeatedAcrossLanguages(t *testing.T) {
 	_, lib, _ := fixture(t)
-	write(t, filepath.Join(lib, "lang.json"), `{"languages": ["es", "fr", "de", "pt"], "keys": {"Close": ["Cerrar", "fake", "fake", "fake"], "Delete": ["Eliminar", "Supprimer", "Löschen", "Eliminar"]}}`)
+	write(t, filepath.Join(lib, "lang.json"), `{"languages": ["es", "zh", "fr", "de"], "keys": {"Close": ["Cerrar", "fake", "fake", "fake"], "Delete": ["canal", "canal", "canal", "canal"]}}`)
 	var logs []string
 	tr := langc.New(fakeModules{{Path: "example.com/lib", Dir: lib, LocalDir: lib, IsMain: true}}, func(a ...any) {
 		parts := make([]string, len(a))

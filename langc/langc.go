@@ -703,10 +703,15 @@ func (t *Translations) BundleTranslations(rootDir string) (string, error) {
 	return `<script type="application/json" id="` + lang.ScriptID + `">` + string(payload) + `</script>`, nil
 }
 
+// nonLatinScript marks the languages whose words can never be a Latin-script
+// cognate of the others (es/pt/fr legitimately share "canal").
+var nonLatinScript = map[string]bool{"zh": true, "hi": true, "ar": true, "ru": true}
+
 // reportRepeatedPlaceholders flags a key whose same non-empty value appears in
-// 3+ languages (e.g. "fake" filler written by an agent instead of a real
-// translation). Two languages may legitimately share a cognate (es/pt); three
-// or more is a placeholder. A value equal to the key itself is exempt.
+// 3+ languages, at least one of them non-Latin-script ("fake" filler written by
+// an agent instead of a real translation). Latin-script languages may
+// legitimately share a cognate (es/pt/fr "canal"); a Latin word repeated in
+// zh/hi/ar/ru is a placeholder. A value equal to the key itself is exempt.
 func (t *Translations) reportRepeatedPlaceholders(st state) {
 	n := len(st.dict.Languages)
 	byValue := map[string][]string{}
@@ -715,13 +720,17 @@ func (t *Translations) reportRepeatedPlaceholders(st state) {
 			values = values[:n]
 		}
 		count := map[string]int{}
-		for _, v := range values {
+		nonLatin := map[string]bool{}
+		for i, v := range values {
 			if v != "" && v != key {
 				count[v]++
+				if nonLatinScript[st.dict.Languages[i]] {
+					nonLatin[v] = true
+				}
 			}
 		}
-		for _, v := range values {
-			if count[v] >= 3 {
+		for v, c := range count {
+			if c >= 3 && nonLatin[v] {
 				byValue[v] = append(byValue[v], key)
 				break
 			}
