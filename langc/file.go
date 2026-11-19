@@ -3,6 +3,7 @@ package langc
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -53,10 +54,10 @@ func readDict(path string, isProject bool) (f langFile, raw []byte, exists bool,
 		return f, nil, false, err
 	}
 	if err := checkDuplicateKeys(raw); err != nil {
-		return f, raw, true, fmt.Errorf("lang: %s: %w", path, err)
+		return f, raw, true, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := json.Unmarshal(raw, &f); err != nil {
-		return f, raw, true, fmt.Errorf("lang: %s: %w", path, err)
+		return f, raw, true, fmt.Errorf("%s: %w", path, err)
 	}
 	if f.Keys == nil {
 		f.Keys = map[string][]string{}
@@ -95,16 +96,16 @@ func checkDuplicateKeys(raw []byte) error {
 						}
 						continue
 					}
-					return fmt.Errorf("expected string key in object, got %s", t)
+					return fmt.Errorf("%s %s", tr(lang.Text("expected string key in object, got")), t)
 				case string:
 					if top.seen[t] {
-						return fmt.Errorf("duplicate key %q", t)
+						return fmt.Errorf("%s %q", tr(lang.Text("duplicate key")), t)
 					}
 					top.seen[t] = true
 					top.expectKey = false
 					continue
 				default:
-					return fmt.Errorf("expected string key in object, got %v", tok)
+					return fmt.Errorf("%s %v", tr(lang.Text("expected string key in object, got")), tok)
 				}
 			}
 		}
@@ -118,7 +119,7 @@ func checkDuplicateKeys(raw []byte) error {
 				stack = append(stack, frame{isObject: false})
 			case '}':
 				if len(stack) == 0 || !stack[len(stack)-1].isObject {
-					return fmt.Errorf("unexpected '}'")
+					return errors.New(tr(lang.Text("unexpected '}'")))
 				}
 				stack = stack[:len(stack)-1]
 				if len(stack) > 0 && stack[len(stack)-1].isObject {
@@ -126,7 +127,7 @@ func checkDuplicateKeys(raw []byte) error {
 				}
 			case ']':
 				if len(stack) == 0 || stack[len(stack)-1].isObject {
-					return fmt.Errorf("unexpected ']'")
+					return errors.New(tr(lang.Text("unexpected ']'")))
 				}
 				stack = stack[:len(stack)-1]
 				if len(stack) > 0 && stack[len(stack)-1].isObject {
@@ -149,10 +150,10 @@ func validate(path string, f langFile) error {
 	seen := map[string]bool{}
 	for _, code := range f.Languages {
 		if !isKnownCode(code) {
-			return fmt.Errorf("lang: %s: unknown language code %q", path, code)
+			return fmt.Errorf("%s: %s %s %q", path, tr(lang.Text("language code")), tr(lang.Text("unknown")), code)
 		}
 		if seen[code] {
-			return fmt.Errorf("lang: %s: duplicate language code %q", path, code)
+			return fmt.Errorf("%s: %s %s %q", path, tr(lang.Text("language code")), tr(lang.Text("duplicate")), code)
 		}
 		seen[code] = true
 	}
@@ -164,7 +165,7 @@ func validate(path string, f langFile) error {
 	}
 	if len(bad) > 0 {
 		sort.Strings(bad)
-		return fmt.Errorf("lang: %s: %d keys have more values than languages (e.g. %q) — fix languages or the lists", path, len(bad), bad[0])
+		return fmt.Errorf("%s: %d %s %s (%s %q) — %s", path, len(bad), tr(lang.Text("keys with")), tr(lang.Text("more values than languages")), tr(lang.Text("e.g.")), bad[0], tr(lang.Text("fix languages or the lists")))
 	}
 	return nil
 }

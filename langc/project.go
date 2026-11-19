@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	wpath "webtyp.com/filepath"
+	"webtyp.com/lang"
 	"webtyp.com/modfind"
 	"webtyp.com/msgtype"
 )
@@ -57,7 +58,7 @@ func (t *Translations) syncProject(rootDir string, st state, mods []modfind.Modu
 		for _, lib := range libs {
 			if lib.LocalDir == "" {
 				moved = false
-				notes = append(notes, note{msgtype.Warning, []any{key, "can't move to", lib.Path, "— no local checkout of it in the workspace"}})
+				notes = append(notes, note{msgtype.Warning, []any{key, lang.Text("can't move to"), lib.Path, lang.Text("— no local checkout of it in the workspace")}})
 				continue
 			}
 			e, err := openLib(edits, lib)
@@ -86,10 +87,10 @@ func (t *Translations) syncProject(rootDir string, st state, mods []modfind.Modu
 	}
 
 	if len(own) > 0 {
-		notes = append(notes, note{msgtype.Warning, []any{len(own), "texts in", wpath.Tilde(st.path), "are the project's own (e.g.", strings.TrimSpace(own[0]) + ") — move them into a module"}})
+		notes = append(notes, note{msgtype.Warning, []any{len(own), lang.Text("texts in"), wpath.Tilde(st.path), lang.Text("are the project's own"), lang.Text("(e.g."), strings.TrimSpace(own[0]) + ")", lang.Text("— move them into a module")}})
 	}
 	for _, k := range sortedKeys(conflicts) {
-		notes = append(notes, note{msgtype.Warning, []any{k + ":", "project «" + projectSays[k] + "» vs", strings.Join(conflicts[k], ", "), "— keep one"}})
+		notes = append(notes, note{msgtype.Warning, []any{k + ":", lang.Text("project"), "«" + projectSays[k] + "»", lang.Text("vs"), strings.Join(conflicts[k], ", "), lang.Text("— keep one")}})
 	}
 	for _, e := range edits {
 		if err := e.write(); err != nil {
@@ -151,7 +152,7 @@ func (t *Translations) reportLibraryGaps(st state, uses keyUses, owners map[stri
 	}
 	if len(own) > 0 {
 		sort.Strings(own)
-		t.note(msgtype.Warning, len(own), "untranslated texts are the project's own (e.g.", own[0]+") — move them into a module")
+		t.note(msgtype.Warning, len(own), lang.Text("untranslated texts"), lang.Text("are the project's own"), lang.Text("(e.g."), own[0]+")", lang.Text("— move them into a module"))
 	}
 	mods := make([]string, 0, len(gaps))
 	for m := range gaps {
@@ -195,7 +196,7 @@ func (t *Translations) reportLibraryGaps(st state, uses keyUses, owners map[stri
 			if filepath.IsAbs(where) {
 				where = wpath.Tilde(filepath.Join(where, fileName))
 			}
-			t.note(msgtype.Warning, items[0].count, "untranslated in", lk, "—", where)
+			t.note(msgtype.Warning, items[0].count, lang.Text("untranslated in"), lk, "—", where)
 			continue
 		}
 		total := 0
@@ -204,7 +205,7 @@ func (t *Translations) reportLibraryGaps(st state, uses keyUses, owners map[stri
 			total += it.count
 			paths = append(paths, it.dir+" ("+strconv.Itoa(it.count)+")")
 		}
-		t.note(msgtype.Warning, total, "untranslated in", lk, "("+fileName+") —", wpath.CompactList(paths))
+		t.note(msgtype.Warning, total, lang.Text("untranslated in"), lk, "("+fileName+") —", wpath.CompactList(paths))
 	}
 }
 

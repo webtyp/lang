@@ -4,10 +4,13 @@ package lang_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"webtyp.com/lang"
 	"webtyp.com/lang/langc"
 	"webtyp.com/modfind"
 )
@@ -262,5 +265,120 @@ func main() { _ = tr.Text("Name") }
 	}
 	if got := out.Keys["Name"]; len(got) != 1 || got[0] != "Nombre" {
 		t.Errorf("the library's own value must win: Name = %v, want [Nombre]", got)
+	}
+}
+
+func TestDiagnose_ReportsUntranslatedWithoutWriting(t *testing.T) {
+	app, mods := mainLibraryFixture(t)
+	write(t, filepath.Join(app, "lang.json"), `{"languages":["es","pt"],"keys":{"Confirmed":["Confirmada",""]}}`)
+	write(t, filepath.Join(app, "config", "lang.json"), `{"languages":["es","pt"],"keys":{}}`)
+	var logged []string
+	c := langc.New(mods, nil)
+	c.SetLog(func(a ...any) { logged = append(logged, fmt.Sprint(a...)) })
+	before, _ := os.ReadFile(filepath.Join(app, "config", "lang.json"))
+	if err := c.Diagnose(app); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(filepath.Join(app, "config", "lang.json"))
+	if string(before) != string(after) {
+		t.Errorf("Diagnose must not rewrite the dictionary")
+	}
+	if len(logged) == 0 || !strings.Contains(strings.Join(logged, "\n"), "untranslated in pt") {
+		t.Errorf("expected an untranslated report for pt, got %v", logged)
+	}
+}
+
+func TestDiagnose_BrokenDictionaryIsLangsAndRecovers(t *testing.T) {
+	app := t.TempDir()
+	write(t, filepath.Join(app, "go.mod"), "module example.com/lib\n")
+	mods := fakeModules{{Path: "example.com/lib", Dir: app, LocalDir: app, IsMain: true}}
+	var logged []string
+	c := langc.New(mods, nil)
+	c.SetLog(func(a ...any) { logged = append(logged, fmt.Sprint(a...)) })
+	write(t, filepath.Join(app, "lang.json"), `{"languages":["esj"],"keys":{}}`)
+	_ = c.Diagnose(app)
+	_ = c.Diagnose(app)
+	if len(logged) != 1 || !strings.Contains(logged[0], "esj") {
+		t.Fatalf("broken dictionary must be reported once by LANG, got %v", logged)
+	}
+	write(t, filepath.Join(app, "lang.json"), `{"languages":["es"],"keys":{"Confirmed":["Confirmada"]}}`)
+	_ = c.Diagnose(app)
+	if len(logged) != 2 || !strings.Contains(logged[1], "valid again") {
+		t.Fatalf("recovery must be said, got %v", logged)
+	}
+}
+
+func TestWatch_LangJSONEditIsJudgedThenOrchestratorIsTold(t *testing.T) {
+	app := t.TempDir()
+	write(t, filepath.Join(app, "go.mod"), "module example.com/lib\n")
+	write(t, filepath.Join(app, "lang.json"), `{"languages":["esj"],"keys":{}}`)
+	mods := fakeModules{{Path: "example.com/lib", Dir: app, LocalDir: app, IsMain: true}}
+	var logged []string
+	told := 0
+	c := langc.New(mods, nil)
+	c.SetLog(func(a ...any) { logged = append(logged, fmt.Sprint(a...)) })
+	c.Watch(app, func() { told++ })
+
+	if err := c.NewFileEvent("package.json", ".json", filepath.Join(app, "package.json"), "write"); err != nil || told != 0 {
+		t.Fatalf("a non-dictionary .json is not LANG's (told=%d, err=%v)", told, err)
+	}
+	if err := c.NewFileEvent("lang.json", ".json", filepath.Join(app, "lang.json"), "write"); err != nil {
+		t.Fatal(err)
+	}
+	if told != 1 || len(logged) != 1 || !strings.Contains(logged[0], "esj") {
+		t.Fatalf("expected one LANG error and one notification, got told=%d logged=%v", told, logged)
+	}
+}
+
+func TestDictionary_TranslatesDiagnostics(t *testing.T) {
+	if err := lang.Load(langc.Dictionary()); err != nil {
+		t.Fatalf("lang.Load(langc.Dictionary()): %v", err)
+	}
+	prev := lang.OutLang()
+	defer lang.OutLang(prev)
+	lang.OutLang("es")
+
+	app := t.TempDir()
+	write(t, filepath.Join(app, "go.mod"), "module example.com/lib\n")
+	write(t, filepath.Join(app, "main.go"), "package main\nimport tr \"webtyp.com/lang\"\nfunc main() { _ = tr.Text(\"Confirmed\") }\n")
+	mods := fakeModules{{Path: "example.com/lib", Dir: app, LocalDir: app, IsMain: true}}
+
+	var logged []string
+	c := langc.New(mods, nil)
+	c.SetLog(func(a ...any) { logged = append(logged, fmt.Sprint(a...)) })
+	c.Watch(app, nil)
+
+	write(t, filepath.Join(app, "lang.json"), `{"languages":["esk"],"keys":{}}`)
+	if err := c.NewFileEvent("lang.json", ".json", filepath.Join(app, "lang.json"), "write"); err != nil {
+		t.Fatal(err)
+	}
+	if len(logged) != 1 || strings.Contains(logged[0], "lang: ") || !strings.Contains(logged[0], "código de idioma") || !strings.Contains(logged[0], "desconocido") || !strings.Contains(logged[0], `"esk"`) {
+		t.Fatalf("expected Spanish unknown-language-code error without redundant lang: prefix, got %v", logged)
+	}
+
+	write(t, filepath.Join(app, "lang.json"), `{"languages":["es"],"keys":{"Confirmed":[""]}}`)
+	if err := c.NewFileEvent("lang.json", ".json", filepath.Join(app, "lang.json"), "write"); err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(logged, "\n")
+	if !strings.Contains(all, "diccionario válido de nuevo") || !strings.Contains(all, "sin traducir en es") {
+		t.Fatalf("expected Spanish recovery and untranslated report, got %v", logged)
+	}
+
+	// Verify lang/langc itself passes SyncToolTranslations with zero untranslated/reuse/placeholder warnings.
+	langcDir, err := filepath.Abs("../langc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selfLogs []string
+	self := langc.New(fakeModules{{Path: "webtyp.com/lang/langc", Dir: langcDir, LocalDir: langcDir, IsMain: true}}, func(a ...any) {
+		selfLogs = append(selfLogs, fmt.Sprint(a...))
+	})
+	lang.OutLang("en")
+	if err := self.SyncToolTranslations(langcDir); err != nil {
+		t.Fatalf("SyncToolTranslations on langc: %v", err)
+	}
+	if len(selfLogs) != 0 {
+		t.Fatalf("langc's own dictionary must have zero diagnostics, got %v", selfLogs)
 	}
 }

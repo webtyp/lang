@@ -32,19 +32,19 @@ func Load(dicts ...[]byte) error {
 	codes := make([][]lang, len(dicts))
 	for i, raw := range dicts {
 		if err := json.Unmarshal(raw, &files[i]); err != nil {
-			return stdlibfmt.Errorf("lang: dictionary %d: %w", i, err)
+			return stdlibfmt.Errorf("dictionary %d: %w", i, err)
 		}
 		codes[i] = make([]lang, len(files[i].Languages))
 		for j, code := range files[i].Languages {
 			l, ok := mapLangCode(code)
 			if !ok {
-				return stdlibfmt.Errorf("lang: dictionary %d: unknown language code %q", i, code)
+				return stdlibfmt.Errorf("dictionary %d: unknown language code %q", i, code)
 			}
 			codes[i][j] = l
 		}
 		for k, v := range files[i].Keys {
 			if len(v) > len(files[i].Languages) {
-				return stdlibfmt.Errorf("lang: dictionary %d: key %q has more values than languages", i, k)
+				return stdlibfmt.Errorf("dictionary %d: key %q has more values than languages", i, k)
 			}
 		}
 	}

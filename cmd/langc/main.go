@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"os"
 
+	"webtyp.com/lang"
 	"webtyp.com/lang/langc"
 	"webtyp.com/modfind"
 )
 
 func main() {
+	_ = lang.Load(langc.Dictionary())
+	lang.OutLang()
 	if len(os.Args) == 1 {
 		fmt.Println("Usage: langc sync [-tool] [dir]")
 		os.Exit(0)

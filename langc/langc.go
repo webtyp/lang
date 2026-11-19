@@ -28,6 +28,9 @@ type Translations struct {
 	log     func(...any)
 
 	mu       sync.Mutex
+	lastErr  string            // last dictionary error reported
+	rootDir  string            // project root, set by Watch
+	onChange func()            // called after an edited dictionary was judged, set by Watch
 	lastSeen map[string]string // dictionary path → diagnostics last reported for it
 	pending  []string          // diagnostics of the sync in progress
 	types    []msgtype.Type    // type of each pending diagnostic
@@ -53,12 +56,22 @@ func (t *Translations) SetLog(log func(...any)) {
 	t.log = log
 }
 
+// tr translates a fixed diagnostic phrase (lang.Text). Runtime values stay
+// plain strings/ints so a user's dictionary key or path is never translated.
+func tr(phrase lang.Text) string {
+	return lang.Translate(phrase).String()
+}
+
 // note queues one diagnostic of the sync in progress; flush reports them.
 func (t *Translations) note(typ msgtype.Type, parts ...any) {
 	line := ""
 	for i, p := range parts {
 		if i > 0 {
 			line += " "
+		}
+		if text, ok := p.(lang.Text); ok {
+			line += tr(text)
+			continue
 		}
 		line += fmt.Sprint(p)
 	}
@@ -335,6 +348,9 @@ func (t *Translations) SyncToolTranslations(rootDir string) error {
 func (t *Translations) SyncTranslations(rootDir string) error {
 	st, mods, err := t.load(rootDir)
 	if err != nil {
+		t.mu.Lock()
+		t.reportLoadErrLocked(err)
+		t.mu.Unlock()
 		return err
 	}
 	if !st.isProject {
@@ -382,6 +398,80 @@ func (t *Translations) SyncTranslations(rootDir string) error {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.report(st, uses)
+	t.reportReuse(st)
+	t.reportEmbeddedData(st)
+	t.reportIdenticalValues(st)
+	t.flush(st.path)
+	return nil
+}
+
+// reportLoadErrLocked says a broken dictionary under LANG, once while it
+// persists. t.mu must be held.
+func (t *Translations) reportLoadErrLocked(err error) {
+	if msg := err.Error(); msg != t.lastErr {
+		t.lastErr = msg
+		t.log(msgtype.Error, msg)
+	}
+}
+
+// Watch makes Translations the owner of dictionary edits: it declares the
+// files it watches (devwatch.FilesEventHandlers) and, once an edit of a
+// lang.json is judged, calls onChange so the orchestrator re-bundles it.
+func (t *Translations) Watch(rootDir string, onChange func()) {
+	t.mu.Lock()
+	t.rootDir, t.onChange = rootDir, onChange
+	t.mu.Unlock()
+}
+
+// MainInputFileRelativePath is the file that marks a module for the watcher.
+func (t *Translations) MainInputFileRelativePath() string { return "go.mod" }
+
+// SupportedExtensions: .json is routed here for dictionaries only.
+func (t *Translations) SupportedExtensions() []string { return []string{".json"} }
+
+// UnobservedFiles lists no file: nothing is written by this handler's events.
+func (t *Translations) UnobservedFiles() []string { return nil }
+
+// NewFileEvent judges an edited lang.json: it reports what is wrong (or that it
+// is valid again) and then tells the orchestrator to re-bundle it. Any other
+// .json is not ours.
+func (t *Translations) NewFileEvent(name, extension, filePath, event string) error {
+	if name != fileName {
+		return nil
+	}
+	t.mu.Lock()
+	root, onChange := t.rootDir, t.onChange
+	t.mu.Unlock()
+	if root == "" {
+		return nil
+	}
+	if err := t.Diagnose(root); err != nil {
+		return err
+	}
+	if onChange != nil {
+		onChange()
+	}
+	return nil
+}
+
+// Diagnose re-reports the dictionary problems (untranslated, reuse, ...) after
+// a person or an LLM edited a lang.json, so the log follows the edit like every
+// other handler. Unlike SyncTranslations it never writes a file: the generator
+// must not rewrite a dictionary on every keystroke.
+func (t *Translations) Diagnose(rootDir string) error {
+	st, mods, err := t.load(rootDir)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if err != nil {
+		t.reportLoadErrLocked(err)
+		return nil
+	}
+	if t.lastErr != "" {
+		t.lastErr = ""
+		t.log(msgtype.Success, tr(lang.Text("dictionary valid again")))
+	}
+	uses := scan(mods, clientBuild, st.isProject)
 	t.report(st, uses)
 	t.reportReuse(st)
 	t.reportEmbeddedData(st)
@@ -453,7 +543,7 @@ func (t *Translations) report(st state, uses keyUses) {
 		}
 	}
 	if len(langs) > 0 {
-		t.note(msgtype.Warning, most, "untranslated in", strings.Join(langs, ", "), `(empty "" values in the dictionary)`)
+		t.note(msgtype.Warning, most, lang.Text("untranslated in"), strings.Join(langs, ", "), lang.Text(`(empty "" values in the dictionary)`))
 	}
 }
 
@@ -490,16 +580,16 @@ func (t *Translations) reportReuse(st state) {
 		rest := func(k string) string {
 			return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(k, frag), frag))
 		}
-		verb := "extract it:"
+		verb := lang.Text("extract it:")
 		if _, isKey := st.dict.Keys[frag]; isKey {
-			verb = "already a key, reuse it:"
+			verb = lang.Text("already a key, reuse it:")
 		}
 		ra, rb := rest(a), rest(b)
 		call := "fmt.Err(\"" + frag + "\", rest)"
 		if ra != "" && rb != "" {
 			call = "fmt.Err(\"" + frag + "\", {" + ra + " | " + rb + "})"
 		}
-		t.note(msgtype.Warning, "'"+a+"' and '"+b+"' share '"+frag+"' —", verb, call)
+		t.note(msgtype.Warning, "'"+a+"'", lang.Text("and"), "'"+b+"'", lang.Text("share"), "'"+frag+"' —", verb, call)
 	}
 	for i := 0; i < len(multi); i++ {
 		for j := i + 1; j < len(multi); j++ {
@@ -551,7 +641,7 @@ func trimConnectors(run []string, atStart bool) []string {
 func (t *Translations) reportEmbeddedData(st state) {
 	for k := range st.dict.Keys {
 		if run := shortCommaRun(k); run >= 3 {
-			t.note(msgtype.Error, k, "embeds a", run, "-item code list — pass it as data (a variable), not a literal, see", wpath.Tilde(st.path))
+			t.note(msgtype.Error, k, lang.Text("embeds a"), run, lang.Text("-item code list"), lang.Text("— pass it as data (a variable), not a literal, see"), wpath.Tilde(st.path))
 		}
 	}
 }
@@ -611,7 +701,7 @@ func (t *Translations) reportIdenticalValues(st state) {
 		}
 		frag := strings.Join(run, " ")
 		if strings.HasSuffix(key, frag) {
-			t.note(msgtype.Error, key, "ends with", frag, "unchanged in every language — pass it as data (a variable), not a literal, see", wpath.Tilde(st.path))
+			t.note(msgtype.Error, key, lang.Text("ends with"), frag, lang.Text("unchanged in every language"), lang.Text("— pass it as data (a variable), not a literal, see"), wpath.Tilde(st.path))
 		}
 	}
 }
@@ -658,6 +748,9 @@ func (t *Translations) MissingTranslations(rootDir string) ([]Missing, error) {
 func (t *Translations) BundleTranslations(rootDir string) ([]byte, error) {
 	st, _, err := t.load(rootDir)
 	if err != nil {
+		t.mu.Lock()
+		t.reportLoadErrLocked(err)
+		t.mu.Unlock()
 		return nil, err
 	}
 	if !st.exists {
@@ -743,6 +836,6 @@ func (t *Translations) reportRepeatedPlaceholders(st state) {
 	for _, v := range vals {
 		keys := byValue[v]
 		sort.Strings(keys)
-		t.note(msgtype.Error, len(keys), "keys have placeholder", v, "in 3+ languages — translate them (grep it in the dictionary)")
+		t.note(msgtype.Error, len(keys), lang.Text("keys have placeholder"), v, lang.Text("in 3+ languages — translate them (grep it in the dictionary)"))
 	}
 }
