@@ -44,7 +44,7 @@ Unknown words (e.g. `"Go"`, version numbers, paths) pass through unchanged in bo
 
 webtyp provides translations for two distinct layers:
 
-1. **The App**: What the user builds. The dictionary is kept in `config/lang.json` by `langc sync`. In the browser, `sitec` inlines the merged dictionary in `index.html`, and `lang` reads it automatically.
+1. **The App**: What the user builds. The dictionary is kept in `config/lang.json` by `langc sync`. In the browser, `sitec` emits the merged dictionary as `lang.<hash>.json` (with `<meta name="webtyp-lang">`), `js.PageBootstrap` preloads it into `globalThis.__webtypLang`, and `lang` reads it automatically.
 2. **The Framework's Tools**: webtyp's own tools (e.g. devtui, server) embed their own `lang.json` using `go:embed`. At startup, they call `lang.Load` to register their dictionaries. You can update a tool's dictionary by running `langc sync -tool`. Use `lang.Current()` to read the active language without changing it.
 
 ## API

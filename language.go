@@ -2,15 +2,15 @@ package lang
 
 import "webtyp.com/fmt"
 
-// ScriptID is the id of the <script type="application/json"> element in which
-// the page carries the merged dictionary (written by langc, read here).
-const ScriptID = "webtyp-lang"
+// MetaName is the <meta name="..."> emitted by sitec pointing to the external dictionary JSON file.
+const MetaName = "webtyp-lang"
+
+// GlobalDictKey is the globalThis property where the page bootstrap stores the parsed dictionary JSON
+// before starting the WASM binary.
+const GlobalDictKey = "__webtypLang"
 
 // Private global configuration
-var (
-	defLang       lang = EN
-	explicitlySet bool
-)
+var defLang lang = EN
 
 // Language enumeration for supported languages
 type lang uint8
@@ -100,7 +100,6 @@ func OutLang(l ...any) string {
 	}
 
 	setDefaultLang(newLang)
-	explicitlySet = true
 	return newLang.String()
 }
 

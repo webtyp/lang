@@ -18,27 +18,13 @@ func loadFromPage() {
 		return
 	}
 
-	doc := js.Global().Get("document")
-	if doc.IsUndefined() {
-		return
-	}
-
-	// Not marked loaded until the element exists: a lookup made before the
-	// page carries the dictionary (a package init, a test's TestMain that
-	// inserts it later) must not disable translations for good.
-	script := doc.Call("getElementById", ScriptID)
-	if script.IsNull() || script.IsUndefined() {
+	// Not marked loaded until the bootstrap preloaded the dictionary on globalThis:
+	// a lookup made before the page finishes loading must not disable translations for good.
+	parsed := js.Global().Get(GlobalDictKey)
+	if parsed.IsUndefined() || parsed.IsNull() {
 		return
 	}
 	loaded = true
-
-	jsonStr := script.Get("textContent").String()
-	if jsonStr == "" {
-		return
-	}
-
-	json := js.Global().Get("JSON")
-	parsed := json.Call("parse", jsonStr)
 
 	// Extract default lang
 	def := parsed.Get("default")

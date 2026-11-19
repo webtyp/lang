@@ -14,7 +14,9 @@ flowchart TD
     P2 -- yes --> OWN[add it as the FIRST library dictionary<br>module = main module path]
     P2 -- no --> DEPS
     OWN --> DEPS[add each dependency's lang.json<br>Discover order; broken ones skipped]
-    DEPS --> USE[SyncTranslations, MissingTranslations,<br>BundleTranslations use the same list]
+    DEPS --> USE[SyncTranslations, MissingTranslations,<br>BundleTranslations JSON bytes]
+    USE --> EXT[sitec writes lang.<hash>.json +<br>meta name=webtyp-lang]
+    EXT --> BOOT[js.PageBootstrap preloads<br>into globalThis.__webtypLang]
 ```
 
 Precedence for a key and language (unchanged rule, now with the main module's library file):

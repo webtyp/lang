@@ -653,16 +653,15 @@ func (t *Translations) MissingTranslations(rootDir string) ([]Missing, error) {
 	return st.missing(scan(mods, clientBuild, st.isProject)), nil
 }
 
-// BundleTranslations returns the <script type="application/json"
-// id="webtyp-lang"> element with the merged dictionary (libraries + project;
-// the project wins), or "" when the project has no dictionary file.
-func (t *Translations) BundleTranslations(rootDir string) (string, error) {
+// BundleTranslations returns the merged dictionary JSON bytes (libraries + project;
+// the project wins), or nil when the project has no dictionary file.
+func (t *Translations) BundleTranslations(rootDir string) ([]byte, error) {
 	st, _, err := t.load(rootDir)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if !st.exists {
-		return "", nil
+		return nil, nil
 	}
 	keys := map[string][]string{}
 	add := func(key string) {
@@ -698,9 +697,9 @@ func (t *Translations) BundleTranslations(rootDir string) (string, error) {
 	}
 	payload, err := json.Marshal(langFile{Default: def, Languages: st.dict.Languages, Keys: keys})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return `<script type="application/json" id="` + lang.ScriptID + `">` + string(payload) + `</script>`, nil
+	return payload, nil
 }
 
 // nonLatinScript marks the languages whose words can never be a Latin-script

@@ -21,9 +21,9 @@ force a new `fmt` release on the whole ecosystem.
 ## Where translations live
 
 Translations are **data**, never Go: a project's `config/lang.json` (with `default` and `languages`)
-and each library's `lang.json` at its module root. sitec inlines the merged dictionary in
-`index.html` as `<script type="application/json" id="webtyp-lang">`; the root package reads it once in
-the browser. A server never translates. There is no Go API to register words.
+and each library's `lang.json` at its module root. `sitec` emits the merged dictionary as an
+external hashed JSON file (`lang.<hash>.json`) and `<meta name="webtyp-lang">`; `js.PageBootstrap`
+preloads it into `globalThis.__webtypLang`, and the root package reads it once in the browser. A server never translates. There is no Go API to register words.
 
 ## The root package compiles to WASM
 

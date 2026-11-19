@@ -15,15 +15,9 @@ func TestMain(m *testing.M) {
 	// a consumer's TestMain may do) must not disable translations for good.
 	_ = lang.Translate("Delete").String()
 
-	doc := js.Global().Get("document")
-	if !doc.IsUndefined() {
-		script := doc.Call("createElement", "script")
-		script.Set("type", "application/json")
-		script.Set("id", lang.ScriptID)
-		payload := `{"default":"es","languages":["es","fr"],"keys":{"Delete":["Eliminar","Supprimer"],"This":["Este","Ce"],"action":["acción","action"],"Pick a conversation":["Elige una conversación","Choisissez une conversation"],"name":["nombre","nom"],"Name":["Nombre","Nom"],"Prefix":["Prefijo","Préfixe"],"prefix":["prefijo","préfixe"],"Price":["Precio","Prix"],"price":["precio","prix"],"required":["requerido","requis"],"Send":["",""]}}`
-		script.Set("textContent", payload)
-		doc.Get("head").Call("appendChild", script)
-	}
+	payload := `{"default":"es","languages":["es","fr"],"keys":{"Delete":["Eliminar","Supprimer"],"This":["Este","Ce"],"action":["acción","action"],"Pick a conversation":["Elige una conversación","Choisissez une conversation"],"name":["nombre","nom"],"Name":["Nombre","Nom"],"Prefix":["Prefijo","Préfixe"],"prefix":["prefijo","préfixe"],"Price":["Precio","Prix"],"price":["precio","prix"],"required":["requerido","requis"],"Send":["",""]}}`
+	parsed := js.Global().Get("JSON").Call("parse", payload)
+	js.Global().Set(lang.GlobalDictKey, parsed)
 
 	m.Run()
 }

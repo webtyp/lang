@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"webtyp.com/lang/langc"
@@ -66,13 +65,13 @@ func TestBundle_UsesMainModuleLibraryValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bundle == "" {
+	if len(bundle) == 0 {
 		t.Fatal("empty bundle")
 	}
 	var out struct {
 		Keys map[string][]string `json:"keys"`
 	}
-	if err := json.Unmarshal([]byte(bundle[strings.Index(bundle, ">")+1:strings.LastIndex(bundle, "<")]), &out); err != nil {
+	if err := json.Unmarshal(bundle, &out); err != nil {
 		t.Fatalf("failed to unmarshal bundle json: %v", err)
 	}
 
@@ -92,7 +91,7 @@ func TestBundle_ProjectValueWinsOverMainLibrary(t *testing.T) {
 	var out struct {
 		Keys map[string][]string `json:"keys"`
 	}
-	if err := json.Unmarshal([]byte(bundle[strings.Index(bundle, ">")+1:strings.LastIndex(bundle, "<")]), &out); err != nil {
+	if err := json.Unmarshal(bundle, &out); err != nil {
 		t.Fatalf("failed to unmarshal bundle json: %v", err)
 	}
 
@@ -222,7 +221,7 @@ func main() { _ = tr.Text("Name") }
 	var out struct {
 		Default string `json:"default"`
 	}
-	if err := json.Unmarshal([]byte(bundle[strings.Index(bundle, ">")+1:strings.LastIndex(bundle, "<")]), &out); err != nil {
+	if err := json.Unmarshal(bundle, &out); err != nil {
 		t.Fatalf("failed to unmarshal bundle json: %v", err)
 	}
 	if out.Default != "es" {
@@ -255,7 +254,7 @@ func main() { _ = tr.Text("Name") }
 	var out struct {
 		Keys map[string][]string `json:"keys"`
 	}
-	if err := json.Unmarshal([]byte(bundle[strings.Index(bundle, ">")+1:strings.LastIndex(bundle, "<")]), &out); err != nil {
+	if err := json.Unmarshal(bundle, &out); err != nil {
 		t.Fatalf("failed to unmarshal bundle json: %v", err)
 	}
 	if got := out.Keys["Cancel"]; len(got) != 1 || got[0] != "Cancelar" {

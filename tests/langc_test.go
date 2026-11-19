@@ -247,20 +247,15 @@ func TestBundle_MergesLibrariesProjectWinsAndEscapes(t *testing.T) {
 	write(t, filepath.Join(app, "config", "lang.json"),
 		`{"default": "es", "languages": ["es"], "keys": {"Delete": ["Borrar"], "This": ["Esta"], "Send": [""], "Tag": ["<b>"]}}`)
 	tr := langc.New(mods, nil)
-	el, err := tr.BundleTranslations(app)
+	payload, err := tr.BundleTranslations(app)
 	if err != nil {
 		t.Fatal(err)
 	}
-	prefix := `<script type="application/json" id="webtyp-lang">`
-	if !strings.HasPrefix(el, prefix) || !strings.HasSuffix(el, "</script>") {
-		t.Fatalf("not the dictionary element: %s", el)
-	}
-	payload := strings.TrimSuffix(strings.TrimPrefix(el, prefix), "</script>")
-	if strings.Contains(payload, "<") {
-		t.Errorf("the payload must escape <, got %s", payload)
+	if strings.Contains(string(payload), "<script") || strings.Contains(string(payload), "<") {
+		t.Errorf("the payload must be pure JSON with < escaped, got %s", payload)
 	}
 	var d dict
-	if err := json.Unmarshal([]byte(payload), &d); err != nil {
+	if err := json.Unmarshal(payload, &d); err != nil {
 		t.Fatal(err)
 	}
 	checks := map[string]string{"Delete": "Borrar", "This": "Esta", "Close": "Cerrar", "Tag": "<b>"}
