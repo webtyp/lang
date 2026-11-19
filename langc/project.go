@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	wpath "webtyp.com/filepath"
@@ -157,10 +158,16 @@ func (t *Translations) reportLibraryGaps(st state, uses keyUses, owners map[stri
 		mods = append(mods, m)
 	}
 	sort.Strings(mods)
+	type gapItem struct {
+		dir   string
+		count int
+	}
+	byLang := map[string][]gapItem{}
+	var langOrder []string
 	for _, m := range mods {
-		where := m
+		dir := m
 		if d := owners[m].SourceDir(); d != "" {
-			where = wpath.Tilde(filepath.Join(d, fileName))
+			dir = d
 		}
 		var langs []string
 		most := 0
@@ -172,9 +179,32 @@ func (t *Translations) reportLibraryGaps(st state, uses keyUses, owners map[stri
 				}
 			}
 		}
-		if len(langs) > 0 {
-			t.note(msgtype.Warning, most, "untranslated in", strings.Join(langs, ", "), "—", where)
+		if len(langs) == 0 {
+			continue
 		}
+		lk := strings.Join(langs, ", ")
+		if _, seen := byLang[lk]; !seen {
+			langOrder = append(langOrder, lk)
+		}
+		byLang[lk] = append(byLang[lk], gapItem{dir: dir, count: most})
+	}
+	for _, lk := range langOrder {
+		items := byLang[lk]
+		if len(items) == 1 {
+			where := items[0].dir
+			if filepath.IsAbs(where) {
+				where = wpath.Tilde(filepath.Join(where, fileName))
+			}
+			t.note(msgtype.Warning, items[0].count, "untranslated in", lk, "—", where)
+			continue
+		}
+		total := 0
+		paths := make([]string, 0, len(items))
+		for _, it := range items {
+			total += it.count
+			paths = append(paths, it.dir+" ("+strconv.Itoa(it.count)+")")
+		}
+		t.note(msgtype.Warning, total, "untranslated in", lk, "("+fileName+") —", wpath.CompactList(paths))
 	}
 }
 
